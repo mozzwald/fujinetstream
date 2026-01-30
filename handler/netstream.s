@@ -12,7 +12,6 @@
 ;    +15  NS_RecvByte         Dequeue to A, C=0 ok / C=1 empty
 ;    +18  NS_BytesAvail       Return RX count in A (lo), X (hi)
 ;    +21  NS_GetStatus        Return sticky status in A (clear on read)
-;    +24  NS_GetTxCount       Return TX count in A (lo), X (hi)
 ;
 ;  Notes:
 ;  - Uses internal 32-byte input buffer and 32-byte output ring.
@@ -73,8 +72,6 @@ NS_BytesAvail:
 		jmp		NS_BytesAvail_Impl
 NS_GetStatus:
 		jmp		NS_GetStatus_Impl
-NS_GetTxCount:
-		jmp		NS_GetTxCount_Impl
 
 ;==========================================================================
 ; NS_BeginConcurrent
@@ -94,8 +91,6 @@ NS_GetTxCount:
 		sta		SerialOutputIrqHandler.outLevel
 		sta		SerialOutputIrqHandler.outIndex
 		sta		serialOutHead
-		sta		txCountLo
-		sta		txCountHi
 		ldx		#3
 		sta:rpl	serialErrors,x-
 
@@ -281,10 +276,6 @@ not_active:
 output_idle:
 		pla
 		sta		serout
-		inc		txCountLo
-		bne		txcount_done0
-		inc		txCountHi
-txcount_done0:
 		lsr		serialOutIdle
 		clc
 		plp
@@ -382,19 +373,6 @@ empty:
 .endp
 
 ;==========================================================================
-; NS_GetTxCount
-;
-; Output: A = low, X = high
-;
-.proc NS_GetTxCount_Impl
-		php
-		sei
-		lda		txCountLo
-		ldx		txCountHi
-		plp
-		rts
-.endp
-
 ;==========================================================================
 ;
 ;==========================================================================
@@ -493,10 +471,6 @@ outIndex = *-1
 		lda		$ffff,x
 outBuf = *-2
 		sta		serout
-		inc		txCountLo
-		bne		txcount_done1
-		inc		txCountHi
-txcount_done1:
 		inx
 		txa
 		and		#$1f
@@ -589,8 +563,6 @@ serialErrors	.ds		4
 serial2SBMode	.ds		1
 serialConcurrentNum	.ds	1
 serialOutHead	.ds		1
-txCountLo	.ds		1
-txCountHi	.ds		1
 
 NS_Config	.ds		1		;config byte for concurrent mode (bit 7 = 2 stop bits)
 

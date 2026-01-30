@@ -8,7 +8,6 @@
 		.export _ns_recv_byte
 		.export _ns_bytes_avail
 		.export _ns_get_status
-		.export _ns_get_tx_count
 
 NS_BASE = $2800
 
@@ -55,8 +54,4 @@ _ns_bytes_avail:
 
 _ns_get_status:
 		jsr		NS_BASE+21
-		rts
-
-_ns_get_tx_count:
-		jsr		NS_BASE+24
 		rts
