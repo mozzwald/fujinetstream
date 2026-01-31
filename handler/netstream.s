@@ -21,18 +21,47 @@
 ;    +15  NS_RecvByte         Dequeue to A, C=0 ok / C=1 empty
 ;    +18  NS_BytesAvail       Return RX count in A (lo), X (hi)
 ;    +21  NS_GetStatus        Return sticky status in A (clear on read)
+;    +24  NS_GetVideoStd      Return 0=NTSC, 1=PAL
+;    +27  NS_GetVCountMax     Return max VCOUNT observed (debug)
+;    +30  NS_InitNetstream    Send $70/$F0 enable with hostname/flags/baud
+;    +33  NS_GetFinalFlags    Return final flags byte (PAL bit applied)
+;    +36  NS_GetFinalAUDF3    Return final AUDF3
+;    +39  NS_GetFinalAUDF4    Return final AUDF4
+;    +42  NS_GetNominalBaudLo Return captured nominal baud lo (debug)
+;    +45  NS_GetNominalBaudHi Return captured nominal baud hi (debug)
+;    +48  NS_GetDebugB0       Return debug byte 0
+;    +51  NS_GetDebugB1       Return debug byte 1
+;    +54  NS_GetDebugB2       Return debug byte 2
+;    +57  NS_GetDebugB3       Return debug byte 3
+;    +60  NS_GetDebugB4       Return debug byte 4
+;    +63  NS_GetDebugB5       Return debug byte 5
+;    +66  NS_GetSioStatus     Return last SIO status (Y)
+;    +69  NS_GetDcbDev        Return DDEVIC
+;    +72  NS_GetDcbCmd        Return DCOMND
+;    +75  NS_GetDcbStat       Return DSTATS
+;    +78  NS_GetDcbDbufLo     Return DBUFLO
+;    +81  NS_GetDcbDbufHi     Return DBUFHI
+;    +84  NS_GetDcbDbytLo     Return DBYTLO
+;    +87  NS_GetDcbDbytHi     Return DBYTHI
+;    +90  NS_GetDcbAux1       Return DAUX1
+;    +93  NS_GetDcbAux2       Return DAUX2
+;    +96  NS_GetDcbTimLo      Return DTIMLO
 ;
 ;  Notes:
 ;  - Uses internal 32-byte input buffer and 32-byte output ring.
 ;  - PACTL motor line asserted for entire concurrent session.
 ;  - Future: replace with a FujiDevice netstream command; motor is the only cue for now.
 
+		icl		'sio.inc'
 		icl		'kerneldb.inc'
 		icl		'hardware.inc'
 
 ;==========================================================================
 
 INPUT_BUFSIZE = $20
+NETSTREAM_HOST_MAX = 61
+
+siov	= $e459
 
 ;==========================================================================
 
@@ -81,6 +110,56 @@ NS_BytesAvail:
 		jmp		NS_BytesAvail_Impl
 NS_GetStatus:
 		jmp		NS_GetStatus_Impl
+NS_GetVideoStd:
+		jmp		NS_GetVideoStd_Impl
+NS_GetVCountMax:
+		jmp		NS_GetVCountMax_Impl
+NS_InitNetstream:
+		jmp		NS_InitNetstream_Impl
+NS_GetFinalFlags:
+		jmp		NS_GetFinalFlags_Impl
+NS_GetFinalAUDF3:
+		jmp		NS_GetFinalAUDF3_Impl
+NS_GetFinalAUDF4:
+		jmp		NS_GetFinalAUDF4_Impl
+NS_GetNominalBaudLo:
+		jmp		NS_GetNominalBaudLo_Impl
+NS_GetNominalBaudHi:
+		jmp		NS_GetNominalBaudHi_Impl
+NS_GetDebugB0:
+		jmp		NS_GetDebugB0_Impl
+NS_GetDebugB1:
+		jmp		NS_GetDebugB1_Impl
+NS_GetDebugB2:
+		jmp		NS_GetDebugB2_Impl
+NS_GetDebugB3:
+		jmp		NS_GetDebugB3_Impl
+NS_GetDebugB4:
+		jmp		NS_GetDebugB4_Impl
+NS_GetDebugB5:
+		jmp		NS_GetDebugB5_Impl
+NS_GetSioStatus:
+		jmp		NS_GetSioStatus_Impl
+NS_GetDcbDev:
+		jmp		NS_GetDcbDev_Impl
+NS_GetDcbCmd:
+		jmp		NS_GetDcbCmd_Impl
+NS_GetDcbStat:
+		jmp		NS_GetDcbStat_Impl
+NS_GetDcbDbufLo:
+		jmp		NS_GetDcbDbufLo_Impl
+NS_GetDcbDbufHi:
+		jmp		NS_GetDcbDbufHi_Impl
+NS_GetDcbDbytLo:
+		jmp		NS_GetDcbDbytLo_Impl
+NS_GetDcbDbytHi:
+		jmp		NS_GetDcbDbytHi_Impl
+NS_GetDcbAux1:
+		jmp		NS_GetDcbAux1_Impl
+NS_GetDcbAux2:
+		jmp		NS_GetDcbAux2_Impl
+NS_GetDcbTimLo:
+		jmp		NS_GetDcbTimLo_Impl
 
 ;==========================================================================
 ; NS_BeginConcurrent
@@ -92,6 +171,7 @@ NS_GetStatus:
 .proc NS_BeginConcurrent_Impl
 		;NOTE: Future: add FujiDevice netstream command. For now, motor assert
 		;is the only external cue that concurrent mode is active.
+		jsr		DetectPALViaVCOUNT
 		;set output idle and clear levels
 		lda		#$ff
 		sta		serialOutIdle
@@ -139,11 +219,13 @@ NS_GetStatus:
 		ldx		#8
 		mva:rpl	pokey_init,x $d200,x-
 
-		;force MIDI baud rate (31250): AUDF3=$21, AUDF4=$00
-		lda		#$21
+		;apply configured AUDF3/AUDF4 (set by NS_InitNetstream)
+		lda		NetstreamFinalAUDF3
 		sta		audf3
-		lda		#$00
+		lda		NetstreamFinalAUDF4
 		sta		audf4
+		lda		#$28			;1.79MHz clock, join ch3+4
+		sta		audctl
 
 		;mark concurrent mode active
 		sei
@@ -170,10 +252,31 @@ copy_loop:
 
 		jsr		SwapIrqVector
 
-		;switch serial port to channel 4 async recv, channel 2 xmit
+		;serial port timing from NetstreamFinalFlags:
+		; 0x04 = TX clock source (0=internal ch4, 1=external)
+		; 0x08 = RX clock source (0=internal async, 1=external)
 		lda		sskctl
-		and		#$07
-		ora		#$70
+		and		#$0f
+		lda		NetstreamFinalFlags
+		and		#$0c
+		beq		skctl_int_int		; RX int, TX int
+		cmp		#$04
+		beq		skctl_int_ext		; RX int, TX ext
+		cmp		#$08
+		beq		skctl_ext_int		; RX ext, TX int
+		; RX ext, TX ext
+		lda		#$00
+		bne		skctl_apply
+skctl_int_int:
+		lda		#$30			; %011
+		bne		skctl_apply
+skctl_int_ext:
+		lda		#$10			; %001
+		bne		skctl_apply
+skctl_ext_int:
+		lda		#$40			; %100
+skctl_apply:
+		ora		sskctl
 		sta		sskctl
 		sta		skctl
 
@@ -382,6 +485,408 @@ empty:
 .endp
 
 ;==========================================================================
+; NS_GetVideoStd
+;
+; Output: A = NetstreamVideoStd (0=NTSC, 1=PAL)
+;
+.proc NS_GetVideoStd_Impl
+		lda		NetstreamVideoStd
+		rts
+.endp
+
+;==========================================================================
+; NS_GetVCountMax
+;
+; Output: A = NetstreamVCountMax
+;
+.proc NS_GetVCountMax_Impl
+		lda		NetstreamVCountMax
+		rts
+.endp
+
+;==========================================================================
+; NS_InitNetstream
+;
+; Calling convention:
+;   A/X = port (swapped, low/high)
+;   C stack (c_sp at $82): nominal_baud (lo/hi), flags, hostname ptr (lo/hi)
+;
+; Flags bit 0x10 is set/cleared based on VCOUNT PAL detection.
+; Payload: hostname\0 [flags] [audf3]
+;
+.proc NS_InitNetstream_Impl
+		php
+		sei
+
+		; save port from A/X
+		sta		NetstreamPortLo
+		stx		NetstreamPortHi
+
+		; decode cc65 fastcall args from C stack (c_sp at $82)
+		ldy		#0
+		lda		($82),y			; nominal lo
+		sta		NetstreamNominalBaudLo
+		iny
+		lda		($82),y			; nominal hi
+		sta		NetstreamNominalBaudHi
+		iny
+		lda		($82),y			; flags
+		sta		NetstreamFinalFlags
+		iny
+		lda		($82),y			; host lo
+		sta		hostPtr
+		iny
+		lda		($82),y			; host hi
+		sta		hostPtr+1
+
+		lda		NetstreamNominalBaudLo
+		ldx		NetstreamNominalBaudHi
+		jsr		LookupBaudFromNominal
+		bcc		lookup_ok
+		jmp		init_fail
+lookup_ok:
+		; apply PAL flag (0x10) after flags are known
+		jsr		DetectPALViaVCOUNT
+		lda		NetstreamFinalFlags
+		ldx		NetstreamVideoStd
+		beq		ntsc_flag
+		ora		#$10
+		bne		store_flags
+ntsc_flag:
+		and		#$ef
+store_flags:
+		ora		#$02			; force REGISTER bit on for now
+		sta		NetstreamFinalFlags
+
+		; build payload buffer: hostname\0 flags audf3 (pad to 64 bytes)
+		ldy		#0
+copy_host:
+		lda		$ffff,y
+hostPtr = *-2
+		sta		NetstreamPayloadBuf,y
+		beq		append_flags
+		iny
+		cpy		#NETSTREAM_HOST_MAX
+		bcc		copy_host
+		; force NUL if maxed
+		lda		#0
+		sta		NetstreamPayloadBuf,y
+
+append_flags:
+		; y = index of NUL terminator
+		iny
+		lda		NetstreamFinalFlags
+		sta		NetstreamPayloadBuf,y
+		iny
+		lda		NetstreamFinalAUDF3
+		sta		NetstreamPayloadBuf,y
+		iny
+		; pad out to 64 bytes
+pad_loop:
+		cpy		#64
+		bcs		payload_done
+		lda		#0
+		sta		NetstreamPayloadBuf,y
+		iny
+		bne		pad_loop
+payload_done:
+		lda		#64
+		sta		NetstreamPayloadLen
+
+		; setup SIO DCB for $70/$F0 enable_netstream
+		lda		#$70
+		sta		ddevic
+		sta		NetstreamDcbDev
+		lda		#1
+		sta		dunit
+		lda		#$f0
+		sta		dcomnd
+		sta		NetstreamDcbCmd
+		lda		#$80
+		sta		dstats
+		sta		NetstreamDcbStat
+		lda		#<NetstreamPayloadBuf
+		sta		dbuflo
+		sta		NetstreamDcbDbufLo
+		lda		#>NetstreamPayloadBuf
+		sta		dbufhi
+		sta		NetstreamDcbDbufHi
+		lda		NetstreamPayloadLen
+		sta		dbytlo
+		sta		NetstreamDcbDbytLo
+		lda		#0
+		sta		dbythi
+		sta		NetstreamDcbDbytHi
+		lda		NetstreamPortLo
+		sta		daux1
+		sta		NetstreamDcbAux1
+		lda		NetstreamPortHi
+		sta		daux2
+		sta		NetstreamDcbAux2
+		lda		#$0f
+		sta		dtimlo
+		sta		NetstreamDcbTimLo
+		lda		#0
+		sta		dtimlo+1
+
+		cli
+		jsr		siov
+		sty		NetstreamSioStatus
+		sei
+
+		; program POKEY for stream mode with selected AUDF3/AUDF4
+		ldx		#8
+		mva:rpl	pokey_init,x $d200,x-
+		lda		NetstreamFinalAUDF3
+		sta		audf3
+		lda		NetstreamFinalAUDF4
+		sta		audf4
+		lda		#$28			;1.79MHz clock, join ch3+4
+		sta		audctl
+
+		lda		#0
+		plp
+		clc
+		rts
+init_fail:
+		; indicate failure (carry set)
+		lda		#1
+		plp
+		sec
+		rts
+.endp
+
+;==========================================================================
+; NS_GetFinalFlags/AUDF3/AUDF4
+;
+.proc NS_GetFinalFlags_Impl
+		lda		NetstreamFinalFlags
+		rts
+.endp
+
+.proc NS_GetFinalAUDF3_Impl
+		lda		NetstreamFinalAUDF3
+		rts
+.endp
+
+.proc NS_GetFinalAUDF4_Impl
+		lda		NetstreamFinalAUDF4
+		rts
+.endp
+
+.proc NS_GetNominalBaudLo_Impl
+		lda		NetstreamNominalBaudLo
+		rts
+.endp
+
+.proc NS_GetNominalBaudHi_Impl
+		lda		NetstreamNominalBaudHi
+		rts
+.endp
+
+.proc NS_GetDebugB0_Impl
+		lda		NetstreamDebugB0
+		rts
+.endp
+
+.proc NS_GetDebugB1_Impl
+		lda		NetstreamDebugB1
+		rts
+.endp
+
+.proc NS_GetDebugB2_Impl
+		lda		NetstreamDebugB2
+		rts
+.endp
+
+.proc NS_GetDebugB3_Impl
+		lda		NetstreamDebugB3
+		rts
+.endp
+
+.proc NS_GetDebugB4_Impl
+		lda		NetstreamDebugB4
+		rts
+.endp
+
+.proc NS_GetDebugB5_Impl
+		lda		NetstreamDebugB5
+		rts
+.endp
+
+.proc NS_GetSioStatus_Impl
+		lda		NetstreamSioStatus
+		rts
+.endp
+
+.proc NS_GetDcbDev_Impl
+		lda		NetstreamDcbDev
+		rts
+.endp
+
+.proc NS_GetDcbCmd_Impl
+		lda		NetstreamDcbCmd
+		rts
+.endp
+
+.proc NS_GetDcbStat_Impl
+		lda		NetstreamDcbStat
+		rts
+.endp
+
+.proc NS_GetDcbDbufLo_Impl
+		lda		NetstreamDcbDbufLo
+		rts
+.endp
+
+.proc NS_GetDcbDbufHi_Impl
+		lda		NetstreamDcbDbufHi
+		rts
+.endp
+
+.proc NS_GetDcbDbytLo_Impl
+		lda		NetstreamDcbDbytLo
+		rts
+.endp
+
+.proc NS_GetDcbDbytHi_Impl
+		lda		NetstreamDcbDbytHi
+		rts
+.endp
+
+.proc NS_GetDcbAux1_Impl
+		lda		NetstreamDcbAux1
+		rts
+.endp
+
+.proc NS_GetDcbAux2_Impl
+		lda		NetstreamDcbAux2
+		rts
+.endp
+
+.proc NS_GetDcbTimLo_Impl
+		lda		NetstreamDcbTimLo
+		rts
+.endp
+
+;==========================================================================
+; LookupBaudFromNominal
+;
+; Input: A = nominal baud lo, X = nominal baud hi
+; Output: NetstreamFinalAUDF3/AUDF4 set, C=0 on success, C=1 on fail
+;
+.proc LookupBaudFromNominal
+		sta		NetstreamNominalBaudLo
+		stx		NetstreamNominalBaudHi
+		ldx		#0
+scan_nominal:
+		lda		BaudTable,x
+		ora		BaudTable+1,x
+		beq		baud_fail
+		lda		BaudTable,x
+		cmp		NetstreamNominalBaudLo
+		bne		next_entry
+		lda		BaudTable+1,x
+		cmp		NetstreamNominalBaudHi
+		bne		next_entry
+		; matched entry: select NTSC or PAL pair
+		lda		NetstreamVideoStd
+		beq		use_ntsc
+		lda		BaudTable+4,x
+		sta		NetstreamFinalAUDF3
+		lda		BaudTable+5,x
+		sta		NetstreamFinalAUDF4
+		clc
+		rts
+use_ntsc:
+		lda		BaudTable+2,x
+		sta		NetstreamFinalAUDF3
+		lda		BaudTable+3,x
+		sta		NetstreamFinalAUDF4
+		clc
+		rts
+next_entry:
+		txa
+		clc
+		adc		#6
+		tax
+		bne		scan_nominal
+baud_fail:
+		sec
+		rts
+.endp
+
+BaudTable:
+		; nominal, nominal_hi, ntsc_audf3, ntsc_audf4, pal_audf3, pal_audf4
+		dta		$2c,$01,159,11,132,11	; 300
+		dta		$58,$02,204,5,190,5		; 600
+		dta		$ee,$02,162,4,151,4		; 750
+		dta		$b0,$04,226,2,219,2		; 1200
+		dta		$60,$09,109,1,106,1		; 2400
+		dta		$c0,$12,179,0,177,0		; 4800
+		dta		$80,$25,86,0,85,0		; 9600
+		dta		$00,$4b,39,0,39,0		; 19200
+		dta		$12,$7a,21,0,21,0		; 31250
+		dta		$00,$96,16,0,16,0		; 38400
+		dta		$34,$9e,15,0,15,0		; ~40500
+		dta		$58,$a6,14,0,14,0		; ~42600
+		dta		$9c,$ae,13,0,13,0		; ~44700
+		dta		$fc,$b7,12,0,12,0		; ~47100
+		dta		$24,$c2,11,0,11,0		; ~49700
+		dta		$88,$cd,10,0,10,0		; ~52600
+		dta		$5c,$da,9,0,9,0		; ~55900
+		dta		$00,$e1,8,0,8,0		; 57600
+		dta		$78,$f8,7,0,7,0		; ~63600
+		dta		$90,$0b,6,0,6,0		; ~68400
+		dta		$18,$12,5,0,5,0		; ~74200
+		dta		$24,$1f,4,0,4,0		; ~81400
+		dta		$94,$23,3,0,3,0		; ~90500
+		dta		$70,$8d,2,0,2,0		; ~102000
+		dta		$30,$cd,1,0,1,0		; ~118000
+		dta		$30,$ec,0,0,0,0		; ~126000
+		dta		0,0
+
+;==========================================================================
+; DetectPALViaVCOUNT
+;
+; VCOUNT is a scanline/2 counter. NTSC tops out around ~130, PAL around ~155.
+; We treat >=150 as PAL. This loop is bounded to avoid hangs.
+;
+.proc DetectPALViaVCOUNT
+		lda		vcount
+		sta		NetstreamVCountPrev
+		sta		NetstreamVCountMax
+		ldx		#$ff
+		ldy		#$ff
+loop:
+		lda		vcount
+		cmp		NetstreamVCountMax
+		bcc		no_max
+		sta		NetstreamVCountMax
+no_max:
+		cmp		NetstreamVCountPrev
+		bcc		wrapped
+		sta		NetstreamVCountPrev
+
+		dey
+		bne		loop
+		dex
+		bne		loop
+
+wrapped:
+		lda		NetstreamVCountMax
+		cmp		#150
+		bcc		ntsc
+		lda		#1
+		bne		store
+ntsc:
+		lda		#0
+store:
+		sta		NetstreamVideoStd
+		rts
+.endp
+
+;==========================================================================
 ;==========================================================================
 ;
 ;==========================================================================
@@ -574,11 +1079,40 @@ serialConcurrentNum	.ds	1
 serialOutHead	.ds		1
 
 NS_Config	.ds		1		;config byte for concurrent mode (bit 7 = 2 stop bits)
+NetstreamVideoStd	.ds	1		;0=NTSC, 1=PAL
+NetstreamVCountMax	.ds	1
+NetstreamVCountPrev	.ds	1
+NetstreamFinalFlags	.ds	1
+NetstreamFinalAUDF3	.ds	1
+NetstreamFinalAUDF4	.ds	1
+NetstreamPayloadLen	.ds	1
+NetstreamPortLo	.ds	1
+NetstreamPortHi	.ds	1
+NetstreamNominalBaudLo	.ds	1
+NetstreamNominalBaudHi	.ds	1
+NetstreamDebugB0	.ds	1
+NetstreamDebugB1	.ds	1
+NetstreamDebugB2	.ds	1
+NetstreamDebugB3	.ds	1
+NetstreamDebugB4	.ds	1
+NetstreamDebugB5	.ds	1
+NetstreamSioStatus	.ds	1
+NetstreamDcbDev	.ds	1
+NetstreamDcbCmd	.ds	1
+NetstreamDcbStat	.ds	1
+NetstreamDcbDbufLo	.ds	1
+NetstreamDcbDbufHi	.ds	1
+NetstreamDcbDbytLo	.ds	1
+NetstreamDcbDbytHi	.ds	1
+NetstreamDcbAux1	.ds	1
+NetstreamDcbAux2	.ds	1
+NetstreamDcbTimLo	.ds	1
 
 inputBuffer	.ds		INPUT_BUFSIZE
 outputBuffer0	.ds		32
+NetstreamPayloadBuf	.ds	64
 
-bss_end = outputBuffer0 + $20
+bss_end = NetstreamPayloadBuf + 64
 
 ;==========================================================================
 ; no auto-run

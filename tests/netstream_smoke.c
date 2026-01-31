@@ -6,6 +6,10 @@
 
 #define BASEADDR 0x2800
 #define ENGINE_PATH "D:NSENGINE.OBX"
+#define NETSTREAM_HOST "localhost"
+#define NETSTREAM_FLAGS 0x02
+#define NETSTREAM_BAUD 57600
+#define NETSTREAM_PORT 9000
 #define PACTL (*(volatile unsigned char*)0xD302)
 #define AUDF3 (*(volatile unsigned char*)0xD204)
 #define AUDF4 (*(volatile unsigned char*)0xD206)
@@ -32,6 +36,32 @@ unsigned char __fastcall__ ns_send_byte(unsigned char b);
 int __fastcall__ ns_recv_byte(void);
 unsigned int __fastcall__ ns_bytes_avail(void);
 unsigned char __fastcall__ ns_get_status(void);
+unsigned char __fastcall__ ns_get_final_flags(void);
+unsigned char __fastcall__ ns_get_final_audf3(void);
+unsigned char __fastcall__ ns_get_final_audf4(void);
+unsigned char __fastcall__ ns_get_nominal_baud_lo(void);
+unsigned char __fastcall__ ns_get_nominal_baud_hi(void);
+unsigned char __fastcall__ ns_get_debug_b0(void);
+unsigned char __fastcall__ ns_get_debug_b1(void);
+unsigned char __fastcall__ ns_get_debug_b2(void);
+unsigned char __fastcall__ ns_get_debug_b3(void);
+unsigned char __fastcall__ ns_get_debug_b4(void);
+unsigned char __fastcall__ ns_get_debug_b5(void);
+unsigned char __fastcall__ ns_get_sio_status(void);
+unsigned char __fastcall__ ns_get_dcb_dev(void);
+unsigned char __fastcall__ ns_get_dcb_cmd(void);
+unsigned char __fastcall__ ns_get_dcb_stat(void);
+unsigned char __fastcall__ ns_get_dcb_dbyt_lo(void);
+unsigned char __fastcall__ ns_get_dcb_aux1(void);
+unsigned char __fastcall__ ns_get_dcb_aux2(void);
+unsigned char __fastcall__ ns_get_dcb_timlo(void);
+unsigned char __fastcall__ ns_init_netstream(const char* host, unsigned char flags, unsigned int nominal_baud, unsigned int port_swapped);
+
+static unsigned int swap16(unsigned int value) {
+    return (unsigned int)(((value << 8) & 0xFF00) | ((value >> 8) & 0x00FF));
+}
+unsigned char __fastcall__ ns_get_video_std(void);
+unsigned char __fastcall__ ns_get_vcount_max(void);
 
 static char input_buf[PROMPT_MAX + 1];
 static unsigned char input_len;
@@ -139,10 +169,11 @@ static void draw_ui(void) {
     gotoxy(0, LOAD_ROW);
     cprintf("Loading %s...", ENGINE_PATH);
     gotoxy(0, VER_ROW);
-    cprintf("Version: $%02X  Base: $%04X", ns_get_version(), ns_get_base());
+    cprintf("Ver:%02X Base:%04X F:%02X 3:%02X 4:%02X",
+            ns_get_version(), ns_get_base(),
+            ns_get_final_flags(), ns_get_final_audf3(), ns_get_final_audf4());
     gotoxy(0, STAT_ROW);
-    cprintf("PACTL=$00 AVAIL=    0 TX=    0 RX=    0");
-
+    cprintf("P:$00 AV:00000 TX:00000 RX:00000 S:00");
     render_prompt();
 
     gotoxy(0, DIVIDER_ROW);
@@ -226,16 +257,21 @@ int main(void) {
         return 1;
     }
 
+    if (ns_init_netstream(NETSTREAM_HOST, NETSTREAM_FLAGS, NETSTREAM_BAUD, swap16(NETSTREAM_PORT)) != 0) {
+        gotoxy(0, LOAD_ROW);
+        cprintf("Bad baud %u got %u", (unsigned)NETSTREAM_BAUD,
+                (unsigned)((ns_get_nominal_baud_hi() << 8) | ns_get_nominal_baud_lo()));
+        cgetc();
+        return 1;
+    }
     ns_begin();
     draw_ui();
 
     while (1) {
         unsigned int avail = ns_bytes_avail();
-        unsigned char status = ns_get_status();
-
         gotoxy(0, STAT_ROW);
-        cprintf("PACTL=$%02X AVAIL=%5u TX=%5lu RX=%5lu",
-                PACTL, avail, tx_count, rx_count);
+        cprintf("P:%02X AV:%5u TX:%5lu RX:%5lu S:%02X",
+                PACTL, avail, tx_count, rx_count, ns_get_sio_status());
 
         while (avail--) {
             int b = ns_recv_byte();
