@@ -6,9 +6,11 @@
 ;	are permitted in any medium without royalty provided the copyright
 ;	notice and this notice are preserved.  This file is offered as-is,
 ;	without any warranty.
+;
+;  Converted from MADS to CA65 syntax.
 
-.ifndef f_SIO_INC
-.def f_SIO_INC
+.if .not .defined(f_SIO_INC)
+f_SIO_INC = 1
 
 SIOSuccess			= $01
 SIOErrorTimeout		= $8A

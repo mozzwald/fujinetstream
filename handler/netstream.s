@@ -11,29 +11,33 @@
 ;  Keeps only concurrent-mode serial engine and IRQ handlers.
 ;  Removed: device handler glue, auto-install chain, non-concurrent I/O.
 ;
-;  API jump table at BASEADDR (JMP absolute, 3 bytes each):
-;    BASEADDR = build-time constant (Makefile HANDLER_BASE)
-;    +0   NS_BeginStream      Start stream mode, install IRQs, assert motor
-;    +3   NS_EndStream        Stop stream mode, restore IRQs, deassert motor
-;    +6   NS_GetVersion       Return version byte in A
-;    +9   NS_GetBase          Return BASEADDR in A (lo), X (hi)
-;    +12  NS_SendByte         Enqueue A to output, C=0 ok / C=1 full
-;    +15  NS_RecvByte         Dequeue to A, C=0 ok / C=1 empty
-;    +18  NS_BytesAvail       Return RX count in A (lo), X (hi)
-;    +21  NS_GetStatus        Return sticky status in A (clear on read)
-;    +24  NS_GetVideoStd      Return 0=NTSC, 1=PAL
-;    +27  NS_InitNetstream    Send $70/$F0 enable with hostname/flags/baud
-;    +30  NS_GetFinalFlags    Return final flags byte (PAL bit applied)
-;    +33  NS_GetFinalAUDF3    Return final AUDF3
-;    +36  NS_GetFinalAUDF4    Return final AUDF4
-;
 ;  Notes:
-;  - Uses internal 32-byte input buffer and 32-byte output ring.
+;  - Uses internal 128-byte input buffer and 128-byte output ring.
 ;  - PACTL motor line asserted for entire concurrent session.
+;
+;  Converted from MADS to CA65 syntax.
+;  Self-modifying-code labels (e.g. outLevel, inPtr, etc.) are kept as
+;  file-scope globals so they can be referenced across routines.
 
-		icl		'sio.inc'
-		icl		'kerneldb.inc'
-		icl		'hardware.inc'
+		.include	"sio.inc"
+		.include	"kerneldb.inc"
+		.include	"hardware.inc"
+
+;==========================================================================
+; Exports to make functions visible from C.
+.export _ns_begin_stream = NS_BeginConcurrent_Impl
+.export _ns_end_stream = NS_EndConcurrent_Impl
+.export _ns_get_version = NS_GetVersion_Impl
+.export _ns_get_base = NS_GetBase_Impl
+.export _ns_send_byte = NS_SendByte_Impl
+.export _ns_recv_byte = NS_RecvByte_Impl
+.export _ns_bytes_avail = NS_BytesAvail_Impl
+.export _ns_get_status = NS_GetStatus_Impl
+.export _ns_get_video_std = NS_GetVideoStd_Impl
+.export _ns_init_netstream = NS_InitNetstream_Impl
+.export _ns_get_final_flags = NS_GetFinalFlags_Impl
+.export _ns_get_final_audf3 = NS_GetFinalAUDF3_Impl
+.export _ns_get_final_audf4 = NS_GetFinalAUDF4_Impl
 
 ;==========================================================================
 
@@ -43,33 +47,16 @@ NETSTREAM_HOST_MAX = 61
 siov	= $e459
 
 ;==========================================================================
+; _ldahi: Load A with high byte of a 16-bit address (HIBUILD=0 default).
+; If HIBUILD=1 is needed, change > to < below.
 
-.macro _hiop opcode adrmode operand
-		.if :adrmode!='#'
-		.error "Immediate addressing mode must be used with hi-opcode"
-		.endif
-		.if HIBUILD
-		:opcode <:operand
-		.else
-		:opcode >:operand
-		.endif
-.endm
-
-.macro _ldahi adrmode operand " "
-		_hiop lda :adrmode :operand
-.endm
-
-.macro _ldxhi adrmode operand " "
-		_hiop ldx :adrmode :operand
-.endm
-
-.macro _ldyhi adrmode operand " "
-		_hiop ldy :adrmode :operand
-.endm
+.macro _ldahi operand
+		lda		#>operand
+.endmacro
 
 ;==========================================================================
 
-		org		BASEADDR
+		.code
 
 ;==========================================================================
 ; API jump table
@@ -116,11 +103,14 @@ NS_GetFinalAUDF4:
 		sta		serialOutIdle
 
 		lda		#0
-		sta		SerialOutputIrqHandler.outLevel
-		sta		SerialOutputIrqHandler.outIndex
+		sta		outLevel
+		sta		outIndex
 		sta		serialOutHead
 		ldx		#3
-		sta:rpl	serialErrors,x-
+@clrerr:
+		sta		serialErrors,x
+		dex
+		bpl		@clrerr
 
 		;setup input buffer (internal)
 		lda		#INPUT_BUFSIZE
@@ -134,29 +124,33 @@ NS_GetFinalAUDF4:
 		ldy		#>inputBuffer
 
 		;(A,Y) -> inBufLo/inBufHi and inputPtr
-		sta		SerialInputIrqHandler.inBufLo
-		sta		SerialInputIrqHandler.inPtr
-		sta		NS_RecvByte_Impl.inReadPtr
-		sty		SerialInputIrqHandler.inBufHi
-		sty		SerialInputIrqHandler.inPtr+1
-		sty		NS_RecvByte_Impl.inReadPtr+1
+		sta		inBufLo
+		sta		inPtr
+		sta		inReadPtr
+		sty		inBufHi
+		sty		inPtr+1
+		sty		inReadPtr+1
 
 		clc
 		adc		serialInSize
-		sta		SerialInputIrqHandler.inBufEndLo
+		sta		inBufEndLo
 		tya
 		adc		serialInSize+1
-		sta		SerialInputIrqHandler.inBufEndHi
+		sta		inBufEndHi
 
 		;setup output buffer
 		lda		#<outputBuffer0
-		sta		SerialOutputIrqHandler.outBuf
-		_ldahi	#outputBuffer0
-		sta		SerialOutputIrqHandler.outBuf+1
+		sta		outBuf
+		_ldahi	outputBuffer0
+		sta		outBuf+1
 
 		;init POKEY registers for serial mode (no SIO/850 modem commands)
 		ldx		#8
-		mva:rpl	pokey_init,x $d200,x-
+@pokey_loop:
+		lda		pokey_init,x
+		sta		$d200,x
+		dex
+		bpl		@pokey_loop
 
 		;apply configured AUDF3/AUDF4 (set by NS_InitNetstream)
 		lda		NetstreamFinalAUDF3
@@ -180,12 +174,14 @@ NS_GetFinalAUDF4:
 
 		;swap in interrupt handlers
 		ldx		#5
-copy_loop:
-		mva		vserin,x serialVecSave,x
-		mva		serialVecs,y vserin,x
+@copy_loop:
+		lda		vserin,x
+		sta		serialVecSave,x
+		lda		serialVecs,y
+		sta		vserin,x
 		dey
 		dex
-		bpl		copy_loop
+		bpl		@copy_loop
 
 		jsr		SwapIrqVector
 
@@ -227,7 +223,7 @@ skctl_apply:
 		;all done
 		ldy		#1
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_EndStream
@@ -253,7 +249,11 @@ skctl_apply:
 
 		;restore interrupt vectors
 		ldx		#5
-		mva:rpl	serialVecSave,x vserin,x-
+@restore:
+		lda		serialVecSave,x
+		sta		vserin,x
+		dex
+		bpl		@restore
 
 		jsr		SwapIrqVector
 
@@ -271,7 +271,7 @@ not_active:
 		;leave critical section
 		plp
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_GetVersion
@@ -279,16 +279,16 @@ not_active:
 .proc NS_GetVersion_Impl
 		lda		#$01
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_GetBase
 ;
 .proc NS_GetBase_Impl
-		lda		#<BASEADDR
-		ldx		#>BASEADDR
+		lda		#<NS_BeginStream
+		ldx		#>NS_BeginStream
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_SendByte
@@ -301,7 +301,7 @@ not_active:
 		sei
 		pha
 
-		lda		SerialOutputIrqHandler.outLevel
+		lda		outLevel
 		cmp		#$80
 		beq		full
 
@@ -317,7 +317,7 @@ not_active:
 		txa
 		and		#$7f
 		sta		serialOutHead
-		inc		SerialOutputIrqHandler.outLevel
+		inc		outLevel
 		clc
 		plp
 		rts
@@ -335,56 +335,63 @@ full:
 		sec
 		plp
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_RecvByte
 ;
 ; Output: A = byte, C=0 success / C=1 empty
 ;
-.proc NS_RecvByte_Impl
+; Not wrapped in .proc because inReadPtr is a self-modifying-code label
+; referenced externally from NS_BeginConcurrent_Impl.
+;
+NS_RecvByte_Impl:
 		php
 		sei
 
 		lda		serialInSpaceLo
 		cmp		serialInSize
-		bne		not_empty
+		bne		NRB_not_empty
 		lda		serialInSpaceHi
 		cmp		serialInSize+1
-		beq		empty
+		beq		NRB_empty
 
-not_empty:
+NRB_not_empty:
 		lda		$ffff
 inReadPtr = *-2
 		pha
 
-		;advance read pointer
-		inw		inReadPtr
+		;advance read pointer (inw inReadPtr)
+		inc		inReadPtr
+		bne		:+
+		inc		inReadPtr+1
+:
 		lda		inReadPtr
-		cmp		SerialInputIrqHandler.inBufEndLo
-		bne		no_wrap
+		cmp		inBufEndLo
+		bne		NRB_no_wrap
 		lda		inReadPtr+1
-		cmp		SerialInputIrqHandler.inBufEndHi
-		bne		no_wrap
-		mva		SerialInputIrqHandler.inBufLo inReadPtr
-		mva		SerialInputIrqHandler.inBufHi inReadPtr+1
+		cmp		inBufEndHi
+		bne		NRB_no_wrap
+		lda		inBufLo
+		sta		inReadPtr
+		lda		inBufHi
+		sta		inReadPtr+1
 
-no_wrap:
+NRB_no_wrap:
 		;increase space in buffer
 		inc		serialInSpaceLo
-		bne		space_done
+		bne		NRB_space_done
 		inc		serialInSpaceHi
-space_done:
+NRB_space_done:
 		pla
 		clc
 		plp
 		rts
 
-empty:
+NRB_empty:
 		sec
 		plp
 		rts
-.endp
 
 ;==========================================================================
 ; NS_BytesAvail
@@ -404,7 +411,7 @@ empty:
 		tya
 		plp
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_GetStatus
@@ -419,7 +426,7 @@ empty:
 		stx		serialErrors
 		plp
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_GetVideoStd
@@ -429,7 +436,7 @@ empty:
 .proc NS_GetVideoStd_Impl
 		lda		NetstreamVideoStd
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_InitNetstream
@@ -560,7 +567,11 @@ payload_done:
 
 		; program POKEY for stream mode with selected AUDF3/AUDF4
 		ldx		#8
-		mva:rpl	pokey_init,x $d200,x-
+@pokey_loop:
+		lda		pokey_init,x
+		sta		$d200,x
+		dex
+		bpl		@pokey_loop
 		lda		NetstreamFinalAUDF3
 		sta		audf3
 		lda		NetstreamFinalAUDF4
@@ -578,7 +589,7 @@ init_fail:
 		plp
 		sec
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; NS_GetFinalFlags/AUDF3/AUDF4
@@ -586,17 +597,17 @@ init_fail:
 .proc NS_GetFinalFlags_Impl
 		lda		NetstreamFinalFlags
 		rts
-.endp
+.endproc
 
 .proc NS_GetFinalAUDF3_Impl
 		lda		NetstreamFinalAUDF3
 		rts
-.endp
+.endproc
 
 .proc NS_GetFinalAUDF4_Impl
 		lda		NetstreamFinalAUDF4
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ; LookupBaudFromNominal
@@ -643,37 +654,37 @@ next_entry:
 baud_fail:
 		sec
 		rts
-.endp
+.endproc
 
 BaudTable:
-		; nominal, nominal_hi, ntsc_audf3, ntsc_audf4, pal_audf3, pal_audf4
-		dta		$2c,$01,159,11,132,11	; 300
-		dta		$58,$02,204,5,190,5		; 600
-		dta		$ee,$02,162,4,151,4		; 750
-		dta		$b0,$04,226,2,219,2		; 1200
-		dta		$60,$09,109,1,106,1		; 2400
-		dta		$c0,$12,179,0,177,0		; 4800
-		dta		$80,$25,86,0,85,0		; 9600
-		dta		$00,$4b,39,0,39,0		; 19200
-		dta		$12,$7a,21,0,21,0		; 31250
-		dta		$00,$96,16,0,16,0		; 38400
-		dta		$34,$9e,15,0,15,0		; ~40500
-		dta		$58,$a6,14,0,14,0		; ~42600
-		dta		$9c,$ae,13,0,13,0		; ~44700
-		dta		$fc,$b7,12,0,12,0		; ~47100
-		dta		$24,$c2,11,0,11,0		; ~49700
-		dta		$88,$cd,10,0,10,0		; ~52600
-		dta		$5c,$da,9,0,9,0		; ~55900
-		dta		$00,$e1,8,0,8,0		; 57600
-		dta		$78,$f8,7,0,7,0		; ~63600
-		dta		$90,$0b,6,0,6,0		; ~68400
-		dta		$18,$12,5,0,5,0		; ~74200
-		dta		$24,$1f,4,0,4,0		; ~81400
-		dta		$94,$23,3,0,3,0		; ~90500
-		dta		$70,$8d,2,0,2,0		; ~102000
-		dta		$30,$cd,1,0,1,0		; ~118000
-		dta		$30,$ec,0,0,0,0		; ~126000
-		dta		0,0
+		; nominal_lo, nominal_hi, ntsc_audf3, ntsc_audf4, pal_audf3, pal_audf4
+		.byte	$2c,$01,159,11,132,11	; 300
+		.byte	$58,$02,204,5,190,5		; 600
+		.byte	$ee,$02,162,4,151,4		; 750
+		.byte	$b0,$04,226,2,219,2		; 1200
+		.byte	$60,$09,109,1,106,1		; 2400
+		.byte	$c0,$12,179,0,177,0		; 4800
+		.byte	$80,$25,86,0,85,0		; 9600
+		.byte	$00,$4b,39,0,39,0		; 19200
+		.byte	$12,$7a,21,0,21,0		; 31250
+		.byte	$00,$96,16,0,16,0		; 38400
+		.byte	$34,$9e,15,0,15,0		; ~40500
+		.byte	$58,$a6,14,0,14,0		; ~42600
+		.byte	$9c,$ae,13,0,13,0		; ~44700
+		.byte	$fc,$b7,12,0,12,0		; ~47100
+		.byte	$24,$c2,11,0,11,0		; ~49700
+		.byte	$88,$cd,10,0,10,0		; ~52600
+		.byte	$5c,$da,9,0,9,0			; ~55900
+		.byte	$00,$e1,8,0,8,0			; 57600
+		.byte	$78,$f8,7,0,7,0			; ~63600
+		.byte	$90,$0b,6,0,6,0			; ~68400
+		.byte	$18,$12,5,0,5,0			; ~74200
+		.byte	$24,$1f,4,0,4,0			; ~81400
+		.byte	$94,$23,3,0,3,0			; ~90500
+		.byte	$70,$8d,2,0,2,0			; ~102000
+		.byte	$30,$cd,1,0,1,0			; ~118000
+		.byte	$30,$ec,0,0,0,0			; ~126000
+		.byte	0,0
 
 ;==========================================================================
 ; DetectPALViaVCOUNT
@@ -713,54 +724,62 @@ ntsc:
 store:
 		sta		NetstreamVideoStd
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 ;==========================================================================
+; Serial input ready IRQ handler.
 ;
-;==========================================================================
-.proc SerialInputIrqHandler
+; Not wrapped in .proc because SMC labels (serialInSpaceLo, inPtr, etc.)
+; are referenced from other routines (NS_BeginConcurrent_Impl, NS_RecvByte_Impl).
+;
+SerialInputIrqHandler:
 		;check if we have space in the buffer
 		lda		#0
-.def :serialInSpaceLo = *-1
-		bne		not_full
+serialInSpaceLo = *-1
+		bne		SIH_not_full
 		lda		#0
-.def :serialInSpaceHi = *-1
-		beq		is_full
+serialInSpaceHi = *-1
+		beq		SIH_is_full
 
-not_full:
+SIH_not_full:
 		;read char and store it in the buffer
 		lda		serin
 		sta		$ffff
 inPtr = *-2
 
-		;bump write (tail) pointer
-		inw		inPtr
+		;bump write (tail) pointer (inw inPtr)
+		inc		inPtr
+		bne		:+
+		inc		inPtr+1
+:
 		lda		inPtr
 		cmp		#0
 inBufEndLo = *-1
-		bne		no_wrap
+		bne		SIH_no_wrap
 		lda		inPtr+1
 		cmp		#0
 inBufEndHi = *-1
-		bne		no_wrap
+		bne		SIH_no_wrap
 		lda		#0
 inBufLo = *-1
 		sta		inPtr
 		lda		#0
 inBufHi = *-1
 		sta		inPtr+1
-no_wrap:
-		;decrement space level in buffer
+SIH_no_wrap:
+		;decrement space level in buffer (sne:dec / dec pattern)
 		lda		serialInSpaceLo
-		sne:dec	serialInSpaceHi
+		bne		:+
+		dec		serialInSpaceHi
+:
 		dec		serialInSpaceLo
 
-xit:
+SIH_xit:
 		pla
 		rti
 
-is_full:
+SIH_is_full:
 		;set overflow error status (bit 4)
 		txa
 		pha
@@ -770,15 +789,18 @@ is_full:
 		sta		serialErrors-1,x
 		pla
 		tax
-		jmp		xit
-.endp
+		jmp		SIH_xit
 
+;==========================================================================
 ; Serial output ready IRQ handler for one stop bit.
 ;
-.proc SerialOutputIrqHandler
+; Not wrapped in .proc because SMC labels (outLevel, outIndex, outBuf)
+; are referenced from NS_BeginConcurrent_Impl and NS_SendByte_Impl.
+;
+SerialOutputIrqHandler:
 		lda		#0
 outLevel = *-1
-		beq		is_empty
+		beq		SOH_is_empty
 		dec		outLevel
 		txa
 		pha
@@ -793,29 +815,32 @@ outBuf = *-2
 		sta		outIndex
 		pla
 		tax
-xit:
-.def :SerialCompleteIrqHandler = *
+SOH_xit:
 		pla
 		rti
-is_empty:
+SOH_is_empty:
 		sec
 		ror		serialOutIdle
-		bne		xit
-.endp
+		bne		SOH_xit
+
+; Serial output complete IRQ handler (same entry as output handler exit)
+SerialCompleteIrqHandler = SOH_xit
 
 ;==========================================================================
 ; IRQ handler used during concurrent I/O.
 ;
-.proc IrqHandler
+; Not wrapped in .proc because chain_addr is referenced from SwapIrqVector.
+;
+IrqHandler:
 		;check if the Break key IRQ is active
 		bit		irqst
-		bpl		is_break
+		bpl		IH_is_break
 
 		;chain to old IRQ handler
 		jmp		IrqHandler
 chain_addr = * - 2
 
-is_break:
+IH_is_break:
 		;ack the break IRQ and return
 		pha
 		lda		#$7f
@@ -824,7 +849,6 @@ is_break:
 		sta		irqen
 		pla
 		rti
-.endp
 
 ;==========================================================================
 ; Exchange the IRQ vector at VIMIRQ with the IRQ save/chain address.
@@ -834,63 +858,59 @@ is_break:
 loop:
 		lda		vimirq,x
 		pha
-		lda		IrqHandler.chain_addr,x
+		lda		chain_addr,x
 		sta		vimirq,x
 		pla
-		sta		IrqHandler.chain_addr,x
+		sta		chain_addr,x
 		dex
 		bpl		loop
 		rts
-.endp
+.endproc
 
 ;==========================================================================
 serialVecs:
-		dta		a(SerialInputIrqHandler)
-		dta		a(SerialOutputIrqHandler)
-		dta		a(SerialCompleteIrqHandler)
+		.word	SerialInputIrqHandler
+		.word	SerialOutputIrqHandler
+		.word	SerialCompleteIrqHandler
 
 ;==========================================================================
 ; POKEY init defaults (AUDC/AUDCTL/etc). AUDF3/AUDF4 overridden below.
 pokey_init:
-		dta		$00		; audf1
-		dta		$00		; audc1
-		dta		$00		; audf2
-		dta		$00		; audc2
-		dta		$00		; audf3 (overridden)
-		dta		$00		; audc3
-		dta		$00		; audf4 (overridden)
-		dta		$00		; audc4
-		dta		$00		; audctl
+		.byte	$00		; audf1
+		.byte	$00		; audc1
+		.byte	$00		; audf2
+		.byte	$00		; audc2
+		.byte	$00		; audf3 (overridden)
+		.byte	$00		; audc3
+		.byte	$00		; audf4 (overridden)
+		.byte	$00		; audc4
+		.byte	$00		; audctl
 
 ;==========================================================================
-; Minimal BSS
-bss_start = *
+; BSS
 
-		org		bss_start
-serialOutIdle	.ds		1
-serialInSize	.ds		2
-serialVecSave	.ds		6
-serialErrors	.ds		4
-serialConcurrentNum	.ds	1
-serialOutHead	.ds		1
+		.bss
 
-NetstreamVideoStd	.ds	1		;0=NTSC, 1=PAL
-NetstreamVCountMax	.ds	1
-NetstreamVCountPrev	.ds	1
-NetstreamFinalFlags	.ds	1
-NetstreamFinalAUDF3	.ds	1
-NetstreamFinalAUDF4	.ds	1
-NetstreamPayloadLen	.ds	1
-NetstreamPortLo	.ds	1
-NetstreamPortHi	.ds	1
-NetstreamNominalBaudLo	.ds	1
-NetstreamNominalBaudHi	.ds	1
+serialOutIdle:			.res	1
+serialInSize:			.res	2
+serialVecSave:			.res	6
+serialErrors:			.res	4
+serialConcurrentNum:	.res	1
+serialOutHead:			.res	1
 
-inputBuffer	.ds		INPUT_BUFSIZE
-outputBuffer0	.ds		128
-NetstreamPayloadBuf	.ds	64
+NetstreamVideoStd:		.res	1		;0=NTSC, 1=PAL
+NetstreamVCountMax:		.res	1
+NetstreamVCountPrev:	.res	1
+NetstreamFinalFlags:	.res	1
+NetstreamFinalAUDF3:	.res	1
+NetstreamFinalAUDF4:	.res	1
+NetstreamPayloadLen:	.res	1
+NetstreamPortLo:		.res	1
+NetstreamPortHi:		.res	1
+NetstreamNominalBaudLo:	.res	1
+NetstreamNominalBaudHi:	.res	1
 
-bss_end = NetstreamPayloadBuf + 64
+inputBuffer:			.res	INPUT_BUFSIZE
+outputBuffer0:			.res	128
+NetstreamPayloadBuf:	.res	64
 
-;==========================================================================
-; no auto-run

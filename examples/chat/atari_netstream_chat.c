@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BASEADDR 0x2800
-#define ENGINE_PATH "D:NSENGINE.OBX"
 #define NETSTREAM_FLAGS 0x06
 #define NETSTREAM_BAUD 57600
 #define NETSTREAM_PORT 9000
@@ -17,10 +15,10 @@
 #define SCREEN_ROWS 24
 
 #define TITLE_ROW 0
-#define LOAD_ROW 1
-#define VER_ROW 2
-#define STAT_ROW 3
-#define PROMPT_ROW 4
+#define VER_ROW (TITLE_ROW + 1)
+#define HOST_ROW VER_ROW
+#define STAT_ROW (HOST_ROW + 1)
+#define PROMPT_ROW (STAT_ROW + 1)
 #define PROMPT_LINES 2
 #define DIVIDER_ROW (PROMPT_ROW + PROMPT_LINES)
 #define RX_START_ROW (DIVIDER_ROW + 1)
@@ -59,61 +57,12 @@ static unsigned char rx_y = RX_START_ROW;
 static unsigned long tx_count;
 static unsigned long rx_count;
 
-static unsigned char load_engine(void) {
-    FILE* f = fopen(ENGINE_PATH, "rb");
-    unsigned char hdr[6];
-    unsigned char* dst = (unsigned char*)BASEADDR;
-    size_t n;
-
-    if (!f) {
-        return 0;
-    }
-
-    n = fread(hdr, 1, 2, f);
-    if (n != 2) {
-        fclose(f);
-        return 0;
-    }
-
-    if (hdr[0] == 0xFF && hdr[1] == 0xFF) {
-        unsigned int start, end, len;
-
-        if (fread(hdr + 2, 1, 4, f) != 4) {
-            fclose(f);
-            return 0;
-        }
-
-        start = (unsigned int)hdr[2] | ((unsigned int)hdr[3] << 8);
-        end = (unsigned int)hdr[4] | ((unsigned int)hdr[5] << 8);
-        if (start != BASEADDR || end < start) {
-            fclose(f);
-            return 0;
-        }
-
-        len = end - start + 1;
-        if (fread(dst, 1, len, f) != len) {
-            fclose(f);
-            return 0;
-        }
-    } else {
-        unsigned int i = 0;
-        dst[i++] = hdr[0];
-        dst[i++] = hdr[1];
-        while ((n = fread(dst + i, 1, 128, f)) > 0) {
-            i += (unsigned int)n;
-        }
-    }
-
-    fclose(f);
-    return 1;
-}
-
 static void prompt_host(void) {
     unsigned char ch;
 
     gotoxy(0, TITLE_ROW);
     cprintf("NETStream Chat Test");
-    gotoxy(0, LOAD_ROW);
+    gotoxy(0, HOST_ROW);
     cprintf("Host: ");
     host_len = 0;
     host_buf[0] = '\0';
@@ -127,9 +76,9 @@ static void prompt_host(void) {
             if (host_len) {
                 --host_len;
                 host_buf[host_len] = '\0';
-                gotoxy(6 + host_len, LOAD_ROW);
+                gotoxy(6 + host_len, HOST_ROW);
                 cputc(' ');
-                gotoxy(6 + host_len, LOAD_ROW);
+                gotoxy(6 + host_len, HOST_ROW);
             }
             continue;
         }
@@ -154,7 +103,7 @@ static void prompt_port(void) {
     unsigned char len = 0;
     char port_buf[6];
 
-    gotoxy(0, LOAD_ROW + 1);
+    gotoxy(0, HOST_ROW + 1);
     cprintf("Port: ");
     memset(port_buf, 0, sizeof(port_buf));
 
@@ -167,9 +116,9 @@ static void prompt_port(void) {
             if (len) {
                 --len;
                 port_buf[len] = '\0';
-                gotoxy(6 + len, LOAD_ROW + 1);
+                gotoxy(6 + len, HOST_ROW + 1);
                 cputc(' ');
-                gotoxy(6 + len, LOAD_ROW + 1);
+                gotoxy(6 + len, HOST_ROW + 1);
             }
             continue;
         }
@@ -237,8 +186,6 @@ static void draw_ui(void) {
     clrscr();
     gotoxy(0, TITLE_ROW);
     cprintf("NETStream Chat Test");
-    gotoxy(0, LOAD_ROW);
-    cprintf("Loading %s...", ENGINE_PATH);
     gotoxy(0, VER_ROW);
     cprintf("Ver:%02X Base:%04X F:%02X 3:%02X 4:%02X",
             ns_get_version(), ns_get_base(),
@@ -316,18 +263,11 @@ static void handle_key(unsigned char ch) {
 int main(void) {
     clrscr();
 
-    if (!load_engine()) {
-        gotoxy(0, LOAD_ROW);
-        cprintf("Load failed");
-        cgetc();
-        return 1;
-    }
-
     prompt_host();
     prompt_port();
 
     if (ns_init_netstream(host_buf, NETSTREAM_FLAGS, NETSTREAM_BAUD, swap16(host_port)) != 0) {
-        gotoxy(0, LOAD_ROW);
+        gotoxy(0, HOST_ROW);
         cprintf("Bad baud %u", (unsigned)NETSTREAM_BAUD);
         cgetc();
         return 1;

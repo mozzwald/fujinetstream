@@ -4,8 +4,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define BASEADDR 0x2800
-#define ENGINE_PATH "D:NSENGINE.OBX"
 #define NETSTREAM_FLAG_REGISTER 0x02
 #define NETSTREAM_FLAG_TX_EXT 0x04
 #define NETSTREAM_FLAG_RX_INT 0x00
@@ -36,55 +34,6 @@ static unsigned int swap16(unsigned int value) {
 static char host_buf[32];
 static unsigned int host_port = NETSTREAM_PORT;
 static unsigned char screen_buf[SCREEN_BYTES];
-
-static unsigned char load_engine(void) {
-    FILE* f = fopen(ENGINE_PATH, "rb");
-    unsigned char hdr[6];
-    unsigned char* dst = (unsigned char*)BASEADDR;
-    size_t n;
-
-    if (!f) {
-        return 0;
-    }
-
-    n = fread(hdr, 1, 2, f);
-    if (n != 2) {
-        fclose(f);
-        return 0;
-    }
-
-    if (hdr[0] == 0xFF && hdr[1] == 0xFF) {
-        unsigned int start, end, len;
-
-        if (fread(hdr + 2, 1, 4, f) != 4) {
-            fclose(f);
-            return 0;
-        }
-
-        start = (unsigned int)hdr[2] | ((unsigned int)hdr[3] << 8);
-        end = (unsigned int)hdr[4] | ((unsigned int)hdr[5] << 8);
-        if (start != BASEADDR || end < start) {
-            fclose(f);
-            return 0;
-        }
-
-        len = end - start + 1;
-        if (fread(dst, 1, len, f) != len) {
-            fclose(f);
-            return 0;
-        }
-    } else {
-        unsigned int i = 0;
-        dst[i++] = hdr[0];
-        dst[i++] = hdr[1];
-        while ((n = fread(dst + i, 1, 128, f)) > 0) {
-            i += (unsigned int)n;
-        }
-    }
-
-    fclose(f);
-    return 1;
-}
 
 static void prompt_host(void) {
     unsigned char ch;
@@ -255,12 +204,6 @@ static void run_cycle(void) {
 }
 
 int main(void) {
-    if (!load_engine()) {
-        clrscr();
-        cprintf("Failed to load NSENGINE.OBX\r\n");
-        return 1;
-    }
-
     prompt_host();
     prompt_port();
 

@@ -6,9 +6,13 @@
 ;	are permitted in any medium without royalty provided the copyright
 ;	notice and this notice are preserved.  This file is offered as-is,
 ;	without any warranty.
+;
+;  Converted from MADS to CA65 syntax.
+;  Changes: .def → = 1, boot? → bootf, .if !sym → .ifndef sym,
+;           .if sym → .ifdef sym
 
 .ifndef f_KERNELDB_INC
-.def f_KERNELDB_INC
+f_KERNELDB_INC = 1
 
 casini	= $0002			;cassette initialization vector
 ramlo	= $0004			;
@@ -16,7 +20,7 @@ tramsz	= $0006			;temporary ram size / cart A flag
 tstdat	= $0007			;RAM test data register / cart B flag
 						;(also CMCMD for T:)
 warmst	= $0008			;warmstart flag
-boot?	= $0009			;boot flag; 0 if none, 1 for disk, 2 for cassette
+bootf	= $0009			;boot flag; 0 if none, 1 for disk, 2 for cassette
 dosvec	= $000a
 dosini	= $000c
 appmhi	= $000e
@@ -27,7 +31,7 @@ bufadr	= $0015			;indirect buffer address pointer (temp for disk buffer)
 		; $0016
 iccomt	= $0017			;CIO: command byte
 
-.if !_KERNEL_XLXE
+.ifndef _KERNEL_XLXE
 pbpnt	= $001d			;Printer: Buffer index (OS-A/B location)
 pbufsz	= $001e			;Printer: Record size (OS-A/B location)
 .endif
@@ -196,7 +200,7 @@ reladr	= $024a			;Relocating loader: temp address (XL/XE)
 		; $0251			;Reserved by 1400XL T: handler
 		; $0263-026a	;Reserved by 1400XL V: handler
 
-.if _KERNEL_816
+.ifdef _KERNEL_816
 vabte	= $024f			;(816) Emulation ABORT vector
 		; $0250
 vcope	= $0251			;(816) Emulation COP vector
@@ -268,7 +272,7 @@ cretry	= $029c			;SIO: command retries (XL/XE)
 hold3	= $029d			;Screen Editor
 hold2	= $029f			;Screen Editor
 dmask	= $02a0			;Display/Editor: Graphics merge mask
-tmplbt	= $02a1			
+tmplbt	= $02a1
 escflg	= $02a2			;Display/Editor: Escape next character
 tabmap	= $02a3			;Display/Editor: Bitfield indicating tabs (note reversed bit positions)
 logmap	= $02b2			;Display/Editor: Logical line start map (4 bytes)
@@ -308,7 +312,7 @@ keyrep	= $02da			;Keyboard repeat rate (XL/XE)
 noclik	= $02db			;Keyboard no-click (XL/XE)
 helpfg	= $02dc			;Help flag (XL/XE)
 
-.if _KERNEL_XLXE
+.ifdef _KERNEL_XLXE
 pbpnt	= $02de			;Printer: Buffer index (XL/XE location)
 pbufsz	= $02df			;Printer: Record size (XL/XE location)
 .endif
@@ -379,7 +383,7 @@ icax6	= $034f			;
 prnbuf	= $03c0			;printer buffer
 ckey	= $03e9			;cassette boot key
 basicf	= $03f8			;XL/XE: ROM BASIC flag. 0 = enabled
-gintlk	= $03fa			;XL/XE: Cartridge interlock (clone of TRIG3). 
+gintlk	= $03fa			;XL/XE: Cartridge interlock (clone of TRIG3).
 chlink	= $03fb			;XL/XE: Relocated loader chain
 casbuf	= $03fd			;Cassette buffer (03FD-047F)
 lbuff	= $0580			;
