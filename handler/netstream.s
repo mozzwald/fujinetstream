@@ -37,7 +37,7 @@
 
 ;==========================================================================
 
-INPUT_BUFSIZE = $80
+INPUT_BUFSIZE = $400
 NETSTREAM_HOST_MAX = 61
 
 siov	= $e459
@@ -123,10 +123,10 @@ NS_GetFinalAUDF4:
 		sta:rpl	serialErrors,x-
 
 		;setup input buffer (internal)
-		lda		#INPUT_BUFSIZE
+		lda		#<INPUT_BUFSIZE
 		sta		serialInSize
 		sta		serialInSpaceLo
-		lda		#0
+		lda		#>INPUT_BUFSIZE
 		sta		serialInSize+1
 		sta		serialInSpaceHi
 
@@ -194,6 +194,7 @@ copy_loop:
 		; 0x08 = RX clock source (0=internal async, 1=external)
 		lda		sskctl
 		and		#$0f
+		sta		NetstreamSKCTLLow
 		lda		NetstreamFinalFlags
 		and		#$0c
 		beq		skctl_int_int		; RX int, TX int
@@ -213,7 +214,7 @@ skctl_int_ext:
 skctl_ext_int:
 		lda		#$40			; %100
 skctl_apply:
-		ora		sskctl
+		ora		NetstreamSKCTLLow
 		sta		sskctl
 		sta		skctl
 
@@ -318,7 +319,7 @@ not_active:
 		and		#$7f
 		sta		serialOutHead
 		inc		SerialOutputIrqHandler.outLevel
-		clc
+		lda		#0
 		plp
 		rts
 
@@ -326,13 +327,13 @@ output_idle:
 		pla
 		sta		serout
 		lsr		serialOutIdle
-		clc
+		lda		#0
 		plp
 		rts
 
 full:
 		pla
-		sec
+		lda		#1
 		plp
 		rts
 .endp
@@ -885,6 +886,7 @@ NetstreamPortLo	.ds	1
 NetstreamPortHi	.ds	1
 NetstreamNominalBaudLo	.ds	1
 NetstreamNominalBaudHi	.ds	1
+NetstreamSKCTLLow	.ds	1
 
 inputBuffer	.ds		INPUT_BUFSIZE
 outputBuffer0	.ds		128
