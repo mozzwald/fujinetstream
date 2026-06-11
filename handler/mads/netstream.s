@@ -28,7 +28,7 @@
 ;    +36  NS_GetFinalAUDF4    Return final AUDF4
 ;
 ;  Notes:
-;  - Uses internal 32-byte input buffer and 32-byte output ring.
+;  - Uses internal 1024-byte input buffer and 128-byte output ring.
 ;  - PACTL motor line asserted for entire concurrent session.
 
 		icl		'sio.inc'

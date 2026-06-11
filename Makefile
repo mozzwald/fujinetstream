@@ -1,25 +1,34 @@
 # Makefile for FujiNetStream Atari
 
 # Mad Assembler
-MADS=/usr/local/bin/mads
+MADS ?= mads
 
 # Set the location of your cc65 installation
-export CC65_HOME = /usr/share/cc65
+CC65_HOME ?= /usr/share/cc65
+export CC65_HOME
 
 # cc65 Target System
 CC65_TARGET   = atari
 
 BUILD_DIR     = build
-ATR_CHAT_DIR  = $(BUILD_DIR)/atr_chat_root
-ATR_SEQ_DIR   = $(BUILD_DIR)/atr_udpseq_root
+MADS_BUILD_DIR = $(BUILD_DIR)/mads
+CA65_BUILD_DIR = $(BUILD_DIR)/ca65
+MADS_ATR_CHAT_DIR = $(MADS_BUILD_DIR)/atr_chat_root
+MADS_ATR_SEQ_DIR  = $(MADS_BUILD_DIR)/atr_udpseq_root
+CA65_ATR_CHAT_DIR = $(CA65_BUILD_DIR)/atr_chat_root
+CA65_ATR_SEQ_DIR  = $(CA65_BUILD_DIR)/atr_udpseq_root
 DIR2ATR       = dir2atr
 
-# Base address for handler-esque binary to exist on Atari
+# Base address for MADS handler-esque binary to exist on Atari.
 HANDLER_BASE  = 10240
 
 # cc65 toolchain
 CC65 ?= cl65
 CFLAGS ?= -t $(CC65_TARGET)
+CFLAGS_EXTRA_MADS_CHAT ?=
+CFLAGS_EXTRA_MADS_UDPSEQ ?=
+CFLAGS_EXTRA_CA65_CHAT ?= --mapfile $(CA65_BUILD_DIR)/atari_netstream_chat.map --listing $(CA65_BUILD_DIR)/atari_netstream_chat.lst
+CFLAGS_EXTRA_CA65_UDPSEQ ?= --mapfile $(CA65_BUILD_DIR)/atari_udp_sequence.map --listing $(CA65_BUILD_DIR)/atari_udp_sequence.lst
 
 # FujiNet Library
 FUJINET_LIB_VERSION = 4.9.0
@@ -27,43 +36,66 @@ FUJINET_LIB_DIR = fujinet-lib-$(CC65_TARGET)-$(FUJINET_LIB_VERSION)
 FUJINET_LIB = $(FUJINET_LIB_DIR)/fujinet-$(CC65_TARGET)-$(FUJINET_LIB_VERSION).lib
 FUJINET_INCLUDES = -I$(FUJINET_LIB_DIR)
 
-NSENGINE      = $(BUILD_DIR)/NSENGINE.OBX
+MADS_NSENGINE = $(MADS_BUILD_DIR)/NSENGINE.OBX
 
-all: $(NSENGINE) \
-	$(ATR_CHAT_DIR)/autorun.sys $(ATR_CHAT_DIR)/DOS.SYS $(ATR_CHAT_DIR)/DUP.SYS $(ATR_CHAT_DIR)/NSENGINE.OBX \
-	$(ATR_SEQ_DIR)/autorun.sys $(ATR_SEQ_DIR)/DOS.SYS $(ATR_SEQ_DIR)/DUP.SYS $(ATR_SEQ_DIR)/NSENGINE.OBX \
-	$(BUILD_DIR)/linux_netstream_chat $(BUILD_DIR)/linux_udp_sequence_server \
-	$(BUILD_DIR)/atari_netstream_chat.atr $(BUILD_DIR)/atari_udp_sequence.atr
+all: mads ca65 linux
 
-$(BUILD_DIR):
-	mkdir -p $(BUILD_DIR)
+mads: mads-chat mads-udpseq
+ca65: ca65-chat ca65-udpseq
+linux: $(BUILD_DIR)/linux_netstream_chat $(BUILD_DIR)/linux_udp_sequence_server
 
-$(NSENGINE): handler/netstream.s | $(BUILD_DIR)
-	$(MADS) handler/netstream.s -i:handler/include -d:BASEADDR=$(HANDLER_BASE) -d:HIBUILD=0 -s -p -o:$@
+mads-chat: $(MADS_BUILD_DIR)/atari_netstream_chat.atr
+mads-udpseq: $(MADS_BUILD_DIR)/atari_udp_sequence.atr
+ca65-chat: $(CA65_BUILD_DIR)/atari_netstream_chat.atr
+ca65-udpseq: $(CA65_BUILD_DIR)/atari_udp_sequence.atr
 
-$(ATR_CHAT_DIR)/NSENGINE.OBX: $(NSENGINE) | $(ATR_CHAT_DIR)
-	cp $(NSENGINE) $@
+$(BUILD_DIR) $(MADS_BUILD_DIR) $(CA65_BUILD_DIR):
+	mkdir -p $@
 
-$(ATR_SEQ_DIR)/NSENGINE.OBX: $(NSENGINE) | $(ATR_SEQ_DIR)
-	cp $(NSENGINE) $@
+$(MADS_NSENGINE): handler/mads/netstream.s | $(MADS_BUILD_DIR)
+	$(MADS) handler/mads/netstream.s -i:handler/mads/include -d:BASEADDR=$(HANDLER_BASE) -d:HIBUILD=0 -s -p -o:$@
 
-$(ATR_CHAT_DIR)/autorun.sys: examples/chat/atari_netstream_chat.c examples/common/netstream_api.s examples/common/atari_netstream.cfg | $(ATR_CHAT_DIR)
-	$(CC65) $(CFLAGS) -C examples/common/atari_netstream.cfg -o $@ examples/chat/atari_netstream_chat.c examples/common/netstream_api.s
+$(MADS_ATR_CHAT_DIR)/NSENGINE.OBX: $(MADS_NSENGINE) | $(MADS_ATR_CHAT_DIR)
+	cp $(MADS_NSENGINE) $@
 
-$(ATR_SEQ_DIR)/autorun.sys: examples/udp-sequence/atari_udp_sequence.c examples/common/netstream_api.s examples/common/atari_netstream.cfg | $(ATR_SEQ_DIR)
-	$(CC65) $(CFLAGS) -C examples/common/atari_netstream.cfg -o $@ examples/udp-sequence/atari_udp_sequence.c examples/common/netstream_api.s
+$(MADS_ATR_SEQ_DIR)/NSENGINE.OBX: $(MADS_NSENGINE) | $(MADS_ATR_SEQ_DIR)
+	cp $(MADS_NSENGINE) $@
 
-$(ATR_CHAT_DIR)/DOS.SYS: examples/dos/DOS.SYS | $(ATR_CHAT_DIR)
-	cp examples/dos/DOS.SYS $(ATR_CHAT_DIR)/DOS.SYS
+$(MADS_ATR_CHAT_DIR)/autorun.sys: examples/chat/atari_netstream_chat.c examples/common/netstream_api.s examples/common/atari_netstream.cfg | $(MADS_ATR_CHAT_DIR)
+	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_MADS_CHAT) -C examples/common/atari_netstream.cfg -o $@ examples/chat/atari_netstream_chat.c examples/common/netstream_api.s
 
-$(ATR_CHAT_DIR)/DUP.SYS: examples/dos/DUP.SYS | $(ATR_CHAT_DIR)
-	cp examples/dos/DUP.SYS $(ATR_CHAT_DIR)/DUP.SYS
+$(MADS_ATR_SEQ_DIR)/autorun.sys: examples/udp-sequence/atari_udp_sequence.c examples/common/netstream_api.s examples/common/atari_netstream.cfg | $(MADS_ATR_SEQ_DIR)
+	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_MADS_UDPSEQ) -C examples/common/atari_netstream.cfg -o $@ examples/udp-sequence/atari_udp_sequence.c examples/common/netstream_api.s
 
-$(ATR_SEQ_DIR)/DOS.SYS: examples/dos/DOS.SYS | $(ATR_SEQ_DIR)
-	cp examples/dos/DOS.SYS $(ATR_SEQ_DIR)/DOS.SYS
+$(CA65_ATR_CHAT_DIR)/autorun.sys: examples/chat/atari_netstream_chat.c handler/ca65/netstream.s examples/common/atari_netstream.cfg | $(CA65_ATR_CHAT_DIR) $(CA65_BUILD_DIR)
+	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_CA65_CHAT) -C examples/common/atari_netstream.cfg --asm-include-dir handler/ca65/include -D NETSTREAM_LINKED_HANDLER -D HIBUILD=0 -o $@ examples/chat/atari_netstream_chat.c handler/ca65/netstream.s
 
-$(ATR_SEQ_DIR)/DUP.SYS: examples/dos/DUP.SYS | $(ATR_SEQ_DIR)
-	cp examples/dos/DUP.SYS $(ATR_SEQ_DIR)/DUP.SYS
+$(CA65_ATR_SEQ_DIR)/autorun.sys: examples/udp-sequence/atari_udp_sequence.c handler/ca65/netstream.s examples/common/atari_netstream.cfg | $(CA65_ATR_SEQ_DIR) $(CA65_BUILD_DIR)
+	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_CA65_UDPSEQ) -C examples/common/atari_netstream.cfg --asm-include-dir handler/ca65/include -D NETSTREAM_LINKED_HANDLER -D HIBUILD=0 -o $@ examples/udp-sequence/atari_udp_sequence.c handler/ca65/netstream.s
+
+$(MADS_ATR_CHAT_DIR)/DOS.SYS: examples/dos/DOS.SYS | $(MADS_ATR_CHAT_DIR)
+	cp examples/dos/DOS.SYS $@
+
+$(CA65_ATR_CHAT_DIR)/DOS.SYS: examples/dos/DOS.SYS | $(CA65_ATR_CHAT_DIR)
+	cp examples/dos/DOS.SYS $@
+
+$(MADS_ATR_CHAT_DIR)/DUP.SYS: examples/dos/DUP.SYS | $(MADS_ATR_CHAT_DIR)
+	cp examples/dos/DUP.SYS $@
+
+$(CA65_ATR_CHAT_DIR)/DUP.SYS: examples/dos/DUP.SYS | $(CA65_ATR_CHAT_DIR)
+	cp examples/dos/DUP.SYS $@
+
+$(MADS_ATR_SEQ_DIR)/DOS.SYS: examples/dos/DOS.SYS | $(MADS_ATR_SEQ_DIR)
+	cp examples/dos/DOS.SYS $@
+
+$(CA65_ATR_SEQ_DIR)/DOS.SYS: examples/dos/DOS.SYS | $(CA65_ATR_SEQ_DIR)
+	cp examples/dos/DOS.SYS $@
+
+$(MADS_ATR_SEQ_DIR)/DUP.SYS: examples/dos/DUP.SYS | $(MADS_ATR_SEQ_DIR)
+	cp examples/dos/DUP.SYS $@
+
+$(CA65_ATR_SEQ_DIR)/DUP.SYS: examples/dos/DUP.SYS | $(CA65_ATR_SEQ_DIR)
+	cp examples/dos/DUP.SYS $@
 
 $(BUILD_DIR)/linux_netstream_chat: examples/chat/linux_netstream_chat.c | $(BUILD_DIR)
 	$(CC) -O2 -Wall -Wextra -o $@ examples/chat/linux_netstream_chat.c
@@ -71,19 +103,25 @@ $(BUILD_DIR)/linux_netstream_chat: examples/chat/linux_netstream_chat.c | $(BUIL
 $(BUILD_DIR)/linux_udp_sequence_server: examples/udp-sequence/linux_udp_sequence_server.c | $(BUILD_DIR)
 	$(CC) -O2 -Wall -Wextra -o $@ examples/udp-sequence/linux_udp_sequence_server.c
 
-$(ATR_CHAT_DIR): | $(BUILD_DIR)
-	mkdir -p $(ATR_CHAT_DIR)
+$(MADS_ATR_CHAT_DIR) $(MADS_ATR_SEQ_DIR): | $(MADS_BUILD_DIR)
+	mkdir -p $@
 
-$(ATR_SEQ_DIR): | $(BUILD_DIR)
-	mkdir -p $(ATR_SEQ_DIR)
+$(CA65_ATR_CHAT_DIR) $(CA65_ATR_SEQ_DIR): | $(CA65_BUILD_DIR)
+	mkdir -p $@
 
-$(BUILD_DIR)/atari_netstream_chat.atr: $(ATR_CHAT_DIR)/autorun.sys $(ATR_CHAT_DIR)/NSENGINE.OBX $(ATR_CHAT_DIR)/DOS.SYS $(ATR_CHAT_DIR)/DUP.SYS | $(BUILD_DIR)
-	$(DIR2ATR) -b Dos25 720 $@ $(ATR_CHAT_DIR)
+$(MADS_BUILD_DIR)/atari_netstream_chat.atr: $(MADS_ATR_CHAT_DIR)/autorun.sys $(MADS_ATR_CHAT_DIR)/NSENGINE.OBX $(MADS_ATR_CHAT_DIR)/DOS.SYS $(MADS_ATR_CHAT_DIR)/DUP.SYS | $(MADS_BUILD_DIR)
+	$(DIR2ATR) -b Dos25 720 $@ $(MADS_ATR_CHAT_DIR)
 
-$(BUILD_DIR)/atari_udp_sequence.atr: $(ATR_SEQ_DIR)/autorun.sys $(ATR_SEQ_DIR)/NSENGINE.OBX $(ATR_SEQ_DIR)/DOS.SYS $(ATR_SEQ_DIR)/DUP.SYS | $(BUILD_DIR)
-	$(DIR2ATR) -b Dos25 720 $@ $(ATR_SEQ_DIR)
+$(MADS_BUILD_DIR)/atari_udp_sequence.atr: $(MADS_ATR_SEQ_DIR)/autorun.sys $(MADS_ATR_SEQ_DIR)/NSENGINE.OBX $(MADS_ATR_SEQ_DIR)/DOS.SYS $(MADS_ATR_SEQ_DIR)/DUP.SYS | $(MADS_BUILD_DIR)
+	$(DIR2ATR) -b Dos25 720 $@ $(MADS_ATR_SEQ_DIR)
+
+$(CA65_BUILD_DIR)/atari_netstream_chat.atr: $(CA65_ATR_CHAT_DIR)/autorun.sys $(CA65_ATR_CHAT_DIR)/DOS.SYS $(CA65_ATR_CHAT_DIR)/DUP.SYS | $(CA65_BUILD_DIR)
+	$(DIR2ATR) -b Dos25 720 $@ $(CA65_ATR_CHAT_DIR)
+
+$(CA65_BUILD_DIR)/atari_udp_sequence.atr: $(CA65_ATR_SEQ_DIR)/autorun.sys $(CA65_ATR_SEQ_DIR)/DOS.SYS $(CA65_ATR_SEQ_DIR)/DUP.SYS | $(CA65_BUILD_DIR)
+	$(DIR2ATR) -b Dos25 720 $@ $(CA65_ATR_SEQ_DIR)
 
 clean:
 	rm -rf $(BUILD_DIR)/*
 
-.PHONY: all clean
+.PHONY: all clean mads ca65 linux mads-chat mads-udpseq ca65-chat ca65-udpseq

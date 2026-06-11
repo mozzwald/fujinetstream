@@ -4,8 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef NETSTREAM_LINKED_HANDLER
 #define BASEADDR 0x2800
 #define ENGINE_PATH "D:NSENGINE.OBX"
+#endif
 #define NETSTREAM_FLAG_REGISTER 0x02
 #define NETSTREAM_FLAG_TX_EXT 0x04
 #define NETSTREAM_FLAG_RX_INT 0x00
@@ -37,6 +39,7 @@ static char host_buf[32];
 static unsigned int host_port = NETSTREAM_PORT;
 static unsigned char screen_buf[SCREEN_BYTES];
 
+#ifndef NETSTREAM_LINKED_HANDLER
 static unsigned char load_engine(void) {
     FILE* f = fopen(ENGINE_PATH, "rb");
     unsigned char hdr[6];
@@ -85,6 +88,7 @@ static unsigned char load_engine(void) {
     fclose(f);
     return 1;
 }
+#endif
 
 static void prompt_host(void) {
     unsigned char ch;
@@ -255,11 +259,13 @@ static void run_cycle(void) {
 }
 
 int main(void) {
+#ifndef NETSTREAM_LINKED_HANDLER
     if (!load_engine()) {
         clrscr();
         cprintf("Failed to load NSENGINE.OBX\r\n");
         return 1;
     }
+#endif
 
     prompt_host();
     prompt_port();

@@ -4,8 +4,10 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef NETSTREAM_LINKED_HANDLER
 #define BASEADDR 0x2800
 #define ENGINE_PATH "D:NSENGINE.OBX"
+#endif
 #define NETSTREAM_FLAGS 0x06
 #define NETSTREAM_BAUD 57600
 #define NETSTREAM_PORT 9000
@@ -59,6 +61,7 @@ static unsigned char rx_y = RX_START_ROW;
 static unsigned long tx_count;
 static unsigned long rx_count;
 
+#ifndef NETSTREAM_LINKED_HANDLER
 static unsigned char load_engine(void) {
     FILE* f = fopen(ENGINE_PATH, "rb");
     unsigned char hdr[6];
@@ -107,6 +110,7 @@ static unsigned char load_engine(void) {
     fclose(f);
     return 1;
 }
+#endif
 
 static void prompt_host(void) {
     unsigned char ch;
@@ -237,8 +241,10 @@ static void draw_ui(void) {
     clrscr();
     gotoxy(0, TITLE_ROW);
     cprintf("NETStream Chat Test");
+#ifndef NETSTREAM_LINKED_HANDLER
     gotoxy(0, LOAD_ROW);
     cprintf("Loading %s...", ENGINE_PATH);
+#endif
     gotoxy(0, VER_ROW);
     cprintf("Ver:%02X Base:%04X F:%02X 3:%02X 4:%02X",
             ns_get_version(), ns_get_base(),
@@ -316,12 +322,14 @@ static void handle_key(unsigned char ch) {
 int main(void) {
     clrscr();
 
+#ifndef NETSTREAM_LINKED_HANDLER
     if (!load_engine()) {
         gotoxy(0, LOAD_ROW);
         cprintf("Load failed");
         cgetc();
         return 1;
     }
+#endif
 
     prompt_host();
     prompt_port();
