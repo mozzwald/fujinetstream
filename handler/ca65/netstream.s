@@ -19,25 +19,27 @@
 ;  Self-modifying-code labels (e.g. outLevel, inPtr, etc.) are kept as
 ;  file-scope globals so they can be referenced across routines.
 
-		.include	"sio.inc"
-		.include	"kerneldb.inc"
-		.include	"hardware.inc"
+		.include    "zeropage.inc"
+		.include    "atari.inc"
 
 ;==========================================================================
 ; Exports to make functions visible from C.
-.export _ns_begin_stream = NS_BeginConcurrent_Impl
-.export _ns_end_stream = NS_EndConcurrent_Impl
-.export _ns_get_version = NS_GetVersion_Impl
-.export _ns_get_base = NS_GetBase_Impl
-.export _ns_send_byte = NS_SendByte_Impl
-.export _ns_recv_byte = NS_RecvByte_Impl
-.export _ns_bytes_avail = NS_BytesAvail_Impl
-.export _ns_get_status = NS_GetStatus_Impl
-.export _ns_get_video_std = NS_GetVideoStd_Impl
-.export _ns_init_netstream = NS_InitNetstream_Impl
-.export _ns_get_final_flags = NS_GetFinalFlags_Impl
-.export _ns_get_final_audf3 = NS_GetFinalAUDF3_Impl
-.export _ns_get_final_audf4 = NS_GetFinalAUDF4_Impl
+.export _ns_begin_stream	= NS_BeginConcurrent_Impl
+.export _ns_end_stream		= NS_EndConcurrent_Impl
+.export _ns_get_version		= NS_GetVersion_Impl
+.export _ns_get_base		= NS_GetBase_Impl
+.export _ns_send_byte		= NS_SendByte_Impl
+.export _ns_recv_byte		= NS_RecvByte_Impl
+.export _ns_bytes_avail		= NS_BytesAvail_Impl
+.export _ns_get_status		= NS_GetStatus_Impl
+.export _ns_get_video_std	= NS_GetVideoStd_Impl
+.export _ns_init_netstream	= NS_InitNetstream_Impl
+.export _ns_get_final_flags	= NS_GetFinalFlags_Impl
+.export _ns_get_final_audf3	= NS_GetFinalAUDF3_Impl
+.export _ns_get_final_audf4	= NS_GetFinalAUDF4_Impl
+
+.import popa
+.import popax
 
 ;==========================================================================
 
@@ -45,8 +47,6 @@
 INPUT_BUFSIZE = $80
 .endif
 NETSTREAM_HOST_MAX = 61
-
-siov	= $e459
 
 ;==========================================================================
 ; _ldahi: Load A with high byte of a 16-bit address (HIBUILD=0 default).
@@ -156,11 +156,11 @@ NS_GetFinalAUDF4:
 
 		;apply configured AUDF3/AUDF4 (set by NS_InitNetstream)
 		lda		NetstreamFinalAUDF3
-		sta		audf3
+		sta		AUDF3
 		lda		NetstreamFinalAUDF4
-		sta		audf4
+		sta		AUDF4
 		lda		#$28			;1.79MHz clock, join ch3+4
-		sta		audctl
+		sta		AUDCTL
 
 		;mark concurrent mode active
 		sei
@@ -169,7 +169,7 @@ NS_GetFinalAUDF4:
 
 		;assert motor line for concurrent session
 		lda		#$34
-		sta		pactl
+		sta		PACTL
 
 		;select serial IRQ vectors (single stop bit only)
 		ldy		#5
@@ -177,10 +177,10 @@ NS_GetFinalAUDF4:
 		;swap in interrupt handlers
 		ldx		#5
 @copy_loop:
-		lda		vserin,x
+		lda		VSERIN,x
 		sta		serialVecSave,x
 		lda		serialVecs,y
-		sta		vserin,x
+		sta		VSERIN,x
 		dey
 		dex
 		bpl		@copy_loop
@@ -190,7 +190,7 @@ NS_GetFinalAUDF4:
 		;serial port timing from NetstreamFinalFlags:
 		; 0x04 = TX clock source (0=internal ch4, 1=external)
 		; 0x08 = RX clock source (0=internal async, 1=external)
-		lda		sskctl
+		lda		SSKCTL
 		and		#$0f
 		sta		NetstreamSKCTLLow
 		lda		NetstreamFinalFlags
@@ -213,14 +213,14 @@ skctl_ext_int:
 		lda		#$40			; %100
 skctl_apply:
 		ora		NetstreamSKCTLLow
-		sta		sskctl
-		sta		skctl
+		sta		SSKCTL
+		sta		SKCTL
 
 		;enable serial input and output ready IRQs
-		lda		pokmsk
+		lda		POKMSK
 		ora		#$30
-		sta		pokmsk
-		sta		irqen
+		sta		POKMSK
+		sta		IRQEN
 		cli
 
 		;all done
@@ -245,16 +245,16 @@ skctl_apply:
 		beq		not_active
 
 		;disable serial interrupts
-		lda		pokmsk
+		lda		POKMSK
 		and		#$c7
-		sta		pokmsk
-		sta		irqen
+		sta		POKMSK
+		sta		IRQEN
 
 		;restore interrupt vectors
 		ldx		#5
 @restore:
 		lda		serialVecSave,x
-		sta		vserin,x
+		sta		VSERIN,x
 		dex
 		bpl		@restore
 
@@ -262,7 +262,7 @@ skctl_apply:
 
 		;deassert motor line
 		lda		#$3c
-		sta		pactl
+		sta		PACTL
 
 		cli
 
@@ -328,7 +328,7 @@ not_active:
 
 output_idle:
 		pla
-		sta		serout
+		sta		SEROUT
 		lsr		serialOutIdle
 		plp
 		lda		#0
@@ -449,10 +449,10 @@ NRB_empty:
 ;
 ; Calling convention:
 ;   A/X = port (swapped, low/high)
-;   C stack (c_sp at $82): nominal_baud (lo/hi), flags, hostname ptr (lo/hi)
+;   C stack (c_sp at $82, but use popa/popax to fetch): nominal_baud (lo/hi), flags, hostname ptr (lo/hi)
 ;
 ; Flags bit 0x10 is set/cleared based on VCOUNT PAL detection.
-; Payload: hostname\0 [flags] [audf3]
+; Payload: hostname\0 [flags] [AUDF3]
 ;
 .proc NS_InitNetstream_Impl
 		php
@@ -462,22 +462,17 @@ NRB_empty:
 		sta		NetstreamPortLo
 		stx		NetstreamPortHi
 
-		; decode cc65 fastcall args from C stack (c_sp at $82)
-		ldy		#0
-		lda		($82),y			; nominal lo
+		; decode cc65 fastcall args from C stack
+		jsr 	popax
 		sta		NetstreamNominalBaudLo
-		iny
-		lda		($82),y			; nominal hi
-		sta		NetstreamNominalBaudHi
-		iny
-		lda		($82),y			; flags
+		stx		NetstreamNominalBaudHi
+
+		jsr 	popa
 		sta		NetstreamFinalFlags
-		iny
-		lda		($82),y			; host lo
+
+		jsr 	popax
 		sta		hostPtr
-		iny
-		lda		($82),y			; host hi
-		sta		hostPtr+1
+		stx		hostPtr+1
 
 		lda		NetstreamNominalBaudLo
 		ldx		NetstreamNominalBaudHi
@@ -506,7 +501,7 @@ store_flags:
 		sta		NetstreamFinalFlags
 seq_ok:
 
-		; build payload buffer: hostname\0 flags audf3 (pad to 64 bytes)
+		; build payload buffer: hostname\0 flags AUDF3 (pad to 64 bytes)
 		ldy		#0
 copy_host:
 		lda		$ffff,y
@@ -543,32 +538,32 @@ payload_done:
 
 		; setup SIO DCB for $70/$F0 enable_netstream
 		lda		#$70
-		sta		ddevic
+		sta		DDEVIC
 		lda		#1
-		sta		dunit
+		sta		DUNIT
 		lda		#$f0
-		sta		dcomnd
+		sta		DCOMND
 		lda		#$80
-		sta		dstats
+		sta		DSTATS
 		lda		#<NetstreamPayloadBuf
-		sta		dbuflo
+		sta		DBUFLO
 		lda		#>NetstreamPayloadBuf
-		sta		dbufhi
+		sta		DBUFHI
 		lda		NetstreamPayloadLen
-		sta		dbytlo
+		sta		DBYTLO
 		lda		#0
-		sta		dbythi
+		sta		DBYTHI
 		lda		NetstreamPortLo
-		sta		daux1
+		sta		DAUX1
 		lda		NetstreamPortHi
-		sta		daux2
+		sta		DAUX2
 		lda		#$0f
-		sta		dtimlo
+		sta		DTIMLO
 		lda		#0
-		sta		dtimlo+1
+		sta		DTIMLO+1
 
 		cli
-		jsr		siov
+		jsr		SIOV
 		sei
 
 		; program POKEY for stream mode with selected AUDF3/AUDF4
@@ -579,11 +574,11 @@ payload_done:
 		dex
 		bpl		@pokey_loop
 		lda		NetstreamFinalAUDF3
-		sta		audf3
+		sta		AUDF3
 		lda		NetstreamFinalAUDF4
-		sta		audf4
+		sta		AUDF4
 		lda		#$28			;1.79MHz clock, join ch3+4
-		sta		audctl
+		sta		AUDCTL
 
 		lda		#0
 		plp
@@ -699,13 +694,13 @@ BaudTable:
 ; We treat >=150 as PAL. This loop is bounded to avoid hangs.
 ;
 .proc DetectPALViaVCOUNT
-		lda		vcount
+		lda		VCOUNT
 		sta		NetstreamVCountPrev
 		sta		NetstreamVCountMax
 		ldx		#$ff
 		ldy		#$ff
 loop:
-		lda		vcount
+		lda		VCOUNT
 		cmp		NetstreamVCountMax
 		bcc		no_max
 		sta		NetstreamVCountMax
@@ -750,7 +745,7 @@ serialInSpaceHi = *-1
 
 SIH_not_full:
 		;read char and store it in the buffer
-		lda		serin
+		lda		SERIN
 		sta		$ffff
 inPtr = *-2
 
@@ -814,7 +809,7 @@ outLevel = *-1
 outIndex = *-1
 		lda		$ffff,x
 outBuf = *-2
-		sta		serout
+		sta		SEROUT
 		inx
 		txa
 		and		#$7f
@@ -839,7 +834,7 @@ SerialCompleteIrqHandler = SOH_xit
 ;
 IrqHandler:
 		;check if the Break key IRQ is active
-		bit		irqst
+		bit		IRQST
 		bpl		IH_is_break
 
 		;chain to old IRQ handler
@@ -850,9 +845,9 @@ IH_is_break:
 		;ack the break IRQ and return
 		pha
 		lda		#$7f
-		sta		irqen
-		lda		pokmsk
-		sta		irqen
+		sta		IRQEN
+		lda		POKMSK
+		sta		IRQEN
 		pla
 		rti
 
@@ -862,10 +857,10 @@ IH_is_break:
 .proc SwapIrqVector
 		ldx		#1
 loop:
-		lda		vimirq,x
+		lda		VIMIRQ,x
 		pha
 		lda		chain_addr,x
-		sta		vimirq,x
+		sta		VIMIRQ,x
 		pla
 		sta		chain_addr,x
 		dex
@@ -886,11 +881,11 @@ pokey_init:
 		.byte	$00		; audc1
 		.byte	$00		; audf2
 		.byte	$00		; audc2
-		.byte	$00		; audf3 (overridden)
+		.byte	$00		; AUDF3 (overridden)
 		.byte	$00		; audc3
-		.byte	$00		; audf4 (overridden)
+		.byte	$00		; AUDF4 (overridden)
 		.byte	$00		; audc4
-		.byte	$00		; audctl
+		.byte	$00		; AUDCTL
 
 ;==========================================================================
 ; BSS
