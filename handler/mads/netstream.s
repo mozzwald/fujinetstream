@@ -28,7 +28,7 @@
 ;    +36  NS_GetFinalAUDF4    Return final AUDF4
 ;
 ;  Notes:
-;  - Uses internal 1024-byte input buffer and 128-byte output ring.
+;  - Uses internal input buffer and 128-byte output ring.
 ;  - PACTL motor line asserted for entire concurrent session.
 
 		icl		'sio.inc'
@@ -37,7 +37,9 @@
 
 ;==========================================================================
 
-INPUT_BUFSIZE = $400
+.ifndef INPUT_BUFSIZE
+INPUT_BUFSIZE = $80
+.endif
 NETSTREAM_HOST_MAX = 61
 
 siov	= $e459
@@ -319,22 +321,25 @@ not_active:
 		and		#$7f
 		sta		serialOutHead
 		inc		SerialOutputIrqHandler.outLevel
-		lda		#0
 		plp
+		lda		#0
+		clc
 		rts
 
 output_idle:
 		pla
 		sta		serout
 		lsr		serialOutIdle
-		lda		#0
 		plp
+		lda		#0
+		clc
 		rts
 
 full:
 		pla
-		lda		#1
 		plp
+		lda		#1
+		sec
 		rts
 .endp
 

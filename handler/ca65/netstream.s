@@ -12,7 +12,7 @@
 ;  Removed: device handler glue, auto-install chain, non-concurrent I/O.
 ;
 ;  Notes:
-;  - Uses internal 1024-byte input buffer and 128-byte output ring.
+;  - Uses internal input buffer and 128-byte output ring.
 ;  - PACTL motor line asserted for entire concurrent session.
 ;
 ;  Converted from MADS to CA65 syntax.
@@ -41,7 +41,9 @@
 
 ;==========================================================================
 
-INPUT_BUFSIZE = $400
+.ifndef INPUT_BUFSIZE
+INPUT_BUFSIZE = $80
+.endif
 NETSTREAM_HOST_MAX = 61
 
 siov	= $e459
@@ -319,22 +321,25 @@ not_active:
 		and		#$7f
 		sta		serialOutHead
 		inc		outLevel
-		lda		#0
 		plp
+		lda		#0
+		clc
 		rts
 
 output_idle:
 		pla
 		sta		serout
 		lsr		serialOutIdle
-		lda		#0
 		plp
+		lda		#0
+		clc
 		rts
 
 full:
 		pla
-		lda		#1
 		plp
+		lda		#1
+		sec
 		rts
 .endproc
 
