@@ -472,6 +472,14 @@ empty:
 		lda		($82),y			; host hi
 		sta		hostPtr+1
 
+		; balance c_sp by 5 bytes after reading args.
+		lda 	#$05
+		clc
+		adc 	$82
+		bcc     no_carry
+		inc     $83
+
+no_carry:
 		lda		NetstreamNominalBaudLo
 		ldx		NetstreamNominalBaudHi
 		jsr		LookupBaudFromNominal
