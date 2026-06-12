@@ -1,10 +1,21 @@
 # NETStream Handler API (ASM + C)
 
-This document describes the callable jump-table API exported by the NETStream handler binary (`NSENGINE.OBX`) and how to call it from assembly or C.
+This document describes the callable API exported by the NETStream handler and
+how to call it from assembly or C. The repository carries two assembler
+syntaxes for the same runtime behavior:
+
+- MADS (`handler/mads/netstream.s`) builds a standalone Atari DOS load object,
+  `NSENGINE.OBX`.
+- CA65 (`handler/ca65/netstream.s`) builds a relocatable object that can be
+  linked directly into a cc65 program.
 
 Base address:
-- The handler is built at a fixed `BASEADDR` (Makefile `HANDLER_BASE`, currently `$2800`).
-- The jump table starts at `BASEADDR` and each entry is a 3-byte `JMP`.
+- The MADS handler is built at a fixed `BASEADDR` (Makefile `HANDLER_BASE`,
+  currently `$2800`).
+- The MADS jump table starts at `BASEADDR` and each entry is a 3-byte `JMP`.
+- The CA65 handler keeps the same internal jump table and also exports cc65
+  symbols such as `_ns_send_byte`, `_ns_recv_byte`, and `_ns_init_netstream`
+  for direct linking.
 
 ## Jump Table (BASEADDR + offset)
 
@@ -16,7 +27,7 @@ Offsets are in bytes from `BASEADDR`.
 | +3  | `NS_EndStream` | — | — | Restores IRQ vectors, deasserts motor, disables serial IRQs.
 | +6  | `NS_GetVersion` | — | A=version | Currently `$01`.
 | +9  | `NS_GetBase` | — | A=lo, X=hi | Returns base address.
-| +12 | `NS_SendByte` | A=byte | C=0 ok / C=1 full | Enqueue one byte for TX.
+| +12 | `NS_SendByte` | A=byte | A=0 and C=0 ok / A=1 and C=1 full | Enqueue one byte for TX.
 | +15 | `NS_RecvByte` | — | A=byte, C=0 ok / C=1 empty | Dequeue one byte from RX.
 | +18 | `NS_BytesAvail` | — | A=lo, X=hi | RX bytes available.
 | +21 | `NS_GetStatus` | — | A=status | Sticky status (clear-on-read).
@@ -39,7 +50,15 @@ Bit meanings:
 
 ## C usage (cc65)
 
-The repo ships `examples/common/netstream_api.s` which wraps the jump table with cc65 `__fastcall__` signatures. You can reuse those prototypes in C:
+For the MADS standalone handler, the repo ships
+`examples/common/netstream_api.s`, which wraps the fixed jump table with cc65
+`__fastcall__` signatures.
+
+For the CA65 linked handler, `handler/ca65/netstream.s` exports the same cc65
+symbols directly. Build the object with `ca65` and link it with the C program;
+the wrapper file is not used in that mode.
+
+You can reuse these prototypes in C for either handler mode:
 
 ```
 void __fastcall__ ns_begin_stream(void);
@@ -57,9 +76,38 @@ unsigned char __fastcall__ ns_init_netstream(const char* host,
 
 Note: `port_swapped` is the port with bytes swapped (big-endian in AUX1/AUX2), e.g. `swap16(9000)`.
 
+## Input Buffer Size
+
+Both handler syntaxes use an internal receive buffer. The source default is
+128 bytes:
+
+```
+INPUT_BUFSIZE = $80
+```
+
+Builds that need more burst tolerance can override this at assembly time. The
+top-level Makefile does this through `NETSTREAM_INPUT_BUFSIZE`, defaulting the
+examples to 1024 bytes:
+
+```
+make handlers NETSTREAM_INPUT_BUFSIZE=256
+make ca65 NETSTREAM_INPUT_BUFSIZE=1024
+```
+
+Assembler-specific forms:
+
+```
+mads handler/mads/netstream.s -i:handler/mads/include -d:BASEADDR=10240 -d:INPUT_BUFSIZE=1024 -d:HIBUILD=0 -s -p -o:NSENGINE.OBX
+ca65 -t atari --include-dir handler/ca65/include -D INPUT_BUFSIZE=1024 -o netstream.o handler/ca65/netstream.s
+```
+
 ## ASM usage (direct)
 
-You can call the jump table directly with `JSR BASEADDR+offset`. For most calls this is trivial; `NS_InitNetstream` is the only one with a C-oriented calling convention.
+You can call the MADS jump table directly with `JSR BASEADDR+offset`. For most
+calls this is trivial; `NS_InitNetstream` is the only one with a C-oriented
+calling convention. CA65 assembly callers can either use the same labels from
+the linked object or call the exported cc65 symbols, depending on their link
+model.
 
 ### Simple calls
 

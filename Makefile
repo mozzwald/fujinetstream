@@ -2,6 +2,7 @@
 
 # Mad Assembler
 MADS ?= mads
+CA65 ?= ca65
 
 # Set the location of your cc65 installation
 CC65_HOME ?= /usr/share/cc65
@@ -22,6 +23,11 @@ DIR2ATR       = dir2atr
 # Base address for MADS handler-esque binary to exist on Atari.
 HANDLER_BASE  = 10240
 
+# Internal receive buffer size for both handler syntaxes. The handler sources
+# default to 128 bytes when this is not supplied, but the examples use 1024 so
+# bursty test traffic has room while the Atari main loop drains the buffer.
+NETSTREAM_INPUT_BUFSIZE ?= 1024
+
 # cc65 toolchain
 CC65 ?= cl65
 CFLAGS ?= -t $(CC65_TARGET)
@@ -37,12 +43,16 @@ FUJINET_LIB = $(FUJINET_LIB_DIR)/fujinet-$(CC65_TARGET)-$(FUJINET_LIB_VERSION).l
 FUJINET_INCLUDES = -I$(FUJINET_LIB_DIR)
 
 MADS_NSENGINE = $(MADS_BUILD_DIR)/NSENGINE.OBX
+CA65_HANDLER_OBJ = $(CA65_BUILD_DIR)/netstream.o
 
 all: mads ca65 linux
 
 mads: mads-chat mads-udpseq
 ca65: ca65-chat ca65-udpseq
 linux: $(BUILD_DIR)/linux_netstream_chat $(BUILD_DIR)/linux_udp_sequence_server
+handlers: mads-handler ca65-handler
+mads-handler: $(MADS_NSENGINE)
+ca65-handler: $(CA65_HANDLER_OBJ)
 
 mads-chat: $(MADS_BUILD_DIR)/atari_netstream_chat.atr
 mads-udpseq: $(MADS_BUILD_DIR)/atari_udp_sequence.atr
@@ -53,7 +63,10 @@ $(BUILD_DIR) $(MADS_BUILD_DIR) $(CA65_BUILD_DIR):
 	mkdir -p $@
 
 $(MADS_NSENGINE): handler/mads/netstream.s | $(MADS_BUILD_DIR)
-	$(MADS) handler/mads/netstream.s -i:handler/mads/include -d:BASEADDR=$(HANDLER_BASE) -d:HIBUILD=0 -s -p -o:$@
+	$(MADS) handler/mads/netstream.s -i:handler/mads/include -d:BASEADDR=$(HANDLER_BASE) -d:INPUT_BUFSIZE=$(NETSTREAM_INPUT_BUFSIZE) -d:HIBUILD=0 -s -p -o:$@
+
+$(CA65_HANDLER_OBJ): handler/ca65/netstream.s | $(CA65_BUILD_DIR)
+	$(CA65) -t $(CC65_TARGET) --create-dep $(@:.o=.d) --include-dir handler/ca65/include -D INPUT_BUFSIZE=$(NETSTREAM_INPUT_BUFSIZE) -o $@ $<
 
 $(MADS_ATR_CHAT_DIR)/NSENGINE.OBX: $(MADS_NSENGINE) | $(MADS_ATR_CHAT_DIR)
 	cp $(MADS_NSENGINE) $@
@@ -67,11 +80,11 @@ $(MADS_ATR_CHAT_DIR)/autorun.sys: examples/chat/atari_netstream_chat.c examples/
 $(MADS_ATR_SEQ_DIR)/autorun.sys: examples/udp-sequence/atari_udp_sequence.c examples/common/netstream_api.s examples/common/atari_netstream.cfg | $(MADS_ATR_SEQ_DIR)
 	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_MADS_UDPSEQ) -C examples/common/atari_netstream.cfg -o $@ examples/udp-sequence/atari_udp_sequence.c examples/common/netstream_api.s
 
-$(CA65_ATR_CHAT_DIR)/autorun.sys: examples/chat/atari_netstream_chat.c handler/ca65/netstream.s examples/common/atari_netstream.cfg | $(CA65_ATR_CHAT_DIR) $(CA65_BUILD_DIR)
-	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_CA65_CHAT) -C examples/common/atari_netstream.cfg --asm-include-dir handler/ca65/include -D NETSTREAM_LINKED_HANDLER -D HIBUILD=0 -o $@ examples/chat/atari_netstream_chat.c handler/ca65/netstream.s
+$(CA65_ATR_CHAT_DIR)/autorun.sys: examples/chat/atari_netstream_chat.c $(CA65_HANDLER_OBJ) examples/common/atari_netstream.cfg | $(CA65_ATR_CHAT_DIR) $(CA65_BUILD_DIR)
+	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_CA65_CHAT) -C examples/common/atari_netstream.cfg -D NETSTREAM_LINKED_HANDLER -o $@ examples/chat/atari_netstream_chat.c $(CA65_HANDLER_OBJ)
 
-$(CA65_ATR_SEQ_DIR)/autorun.sys: examples/udp-sequence/atari_udp_sequence.c handler/ca65/netstream.s examples/common/atari_netstream.cfg | $(CA65_ATR_SEQ_DIR) $(CA65_BUILD_DIR)
-	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_CA65_UDPSEQ) -C examples/common/atari_netstream.cfg --asm-include-dir handler/ca65/include -D NETSTREAM_LINKED_HANDLER -D HIBUILD=0 -o $@ examples/udp-sequence/atari_udp_sequence.c handler/ca65/netstream.s
+$(CA65_ATR_SEQ_DIR)/autorun.sys: examples/udp-sequence/atari_udp_sequence.c $(CA65_HANDLER_OBJ) examples/common/atari_netstream.cfg | $(CA65_ATR_SEQ_DIR) $(CA65_BUILD_DIR)
+	$(CC65) $(CFLAGS) $(CFLAGS_EXTRA_CA65_UDPSEQ) -C examples/common/atari_netstream.cfg -D NETSTREAM_LINKED_HANDLER -o $@ examples/udp-sequence/atari_udp_sequence.c $(CA65_HANDLER_OBJ)
 
 $(MADS_ATR_CHAT_DIR)/DOS.SYS: examples/dos/DOS.SYS | $(MADS_ATR_CHAT_DIR)
 	cp examples/dos/DOS.SYS $@
@@ -124,4 +137,4 @@ $(CA65_BUILD_DIR)/atari_udp_sequence.atr: $(CA65_ATR_SEQ_DIR)/autorun.sys $(CA65
 clean:
 	rm -rf $(BUILD_DIR)/*
 
-.PHONY: all clean mads ca65 linux mads-chat mads-udpseq ca65-chat ca65-udpseq
+.PHONY: all clean handlers mads ca65 linux mads-handler ca65-handler mads-chat mads-udpseq ca65-chat ca65-udpseq

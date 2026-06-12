@@ -21,14 +21,37 @@ Build everything:
 make clean && make
 ```
 
-Build only one Atari handler variant:
+Build only one Atari handler syntax and its Atari examples:
 ```
 make mads
 make ca65
 ```
 
+Build only the handler binaries/objects:
+```
+make handlers
+make mads-handler
+make ca65-handler
+```
+
+The two handler syntaxes implement the same runtime API, but are packaged
+differently:
+- MADS builds a standalone Atari DOS binary, `NSENGINE.OBX`, loaded by the
+  examples at `HANDLER_BASE`.
+- CA65 builds a relocatable object, `netstream.o`, linked directly into the
+  cc65 program and exporting the same `ns_*` symbols used by the examples.
+
+Both handler syntaxes accept `NETSTREAM_INPUT_BUFSIZE` from the Makefile. The
+sources default to 128 bytes if no size is supplied, while the examples build
+with 1024 bytes by default:
+```
+make handlers NETSTREAM_INPUT_BUFSIZE=256
+make ca65 NETSTREAM_INPUT_BUFSIZE=512
+```
+
 Outputs:
 - `build/mads/NSENGINE.OBX` (MADS handler binary)
+- `build/ca65/netstream.o` (CA65 handler object)
 - `build/linux_netstream_chat` (Linux chat client)
 - `build/linux_udp_sequence_server` (Linux UDP sequencing server)
 - `build/mads/atari_netstream_chat.atr` and `build/mads/atari_udp_sequence.atr` (MADS handler ATR images)
