@@ -46,7 +46,8 @@ Bit meanings:
 - `0x08` RX clock source: 0=internal, 1=external
 - `0x10` Video standard: 0=NTSC, 1=PAL (set by handler)
 - `0x20` UDP sequencing: 0=off, 1=on (only valid when UDP is selected)
-- `0x40..0x80` Reserved
+- `0x40` Unpaced: 0=existing paced output, 1=no artificial firmware pacing
+- `0x80` Reserved
 
 ## C usage (cc65)
 

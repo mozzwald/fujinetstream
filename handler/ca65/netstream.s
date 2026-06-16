@@ -47,6 +47,7 @@
 INPUT_BUFSIZE = $80
 .endif
 NETSTREAM_HOST_MAX = 61
+NETSTREAM_FLAG_UNPACED = $40
 
 ;==========================================================================
 ; _ldahi: Load A with high byte of a 16-bit address (HIBUILD=0 default).
