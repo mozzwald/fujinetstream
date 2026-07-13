@@ -734,6 +734,26 @@ store:
 ;
 ;==========================================================================
 .proc SerialInputIrqHandler
+		;capture sticky POKEY receive errors before touching SERIN:
+		;SKSTAT latches read 0 when tripped (bit7 = framing error,
+		;bit6 = serial input overrun). Mirror them inverted (1 = error)
+		;into serialErrors and strobe SKRES to re-arm the latches.
+		lda		skstat
+		eor		#$ff
+		and		#$c0
+		beq		no_serial_error
+		sta		skres
+		sta		errbits
+		txa
+		pha
+		ldx		serialConcurrentNum
+		lda		#0
+errbits = *-1
+		ora		serialErrors-1,x
+		sta		serialErrors-1,x
+		pla
+		tax
+no_serial_error:
 		;check if we have space in the buffer
 		lda		#0
 .def :serialInSpaceLo = *-1
@@ -775,6 +795,10 @@ xit:
 		rti
 
 is_full:
+		;ring full: still read SERIN so the receive condition is
+		;serviced (byte discarded); leaving it unread compounds the
+		;first software overflow into a hardware overrun.
+		lda		serin
 		;set overflow error status (bit 4)
 		txa
 		pha

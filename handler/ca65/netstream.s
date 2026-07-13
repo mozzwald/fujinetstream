@@ -735,6 +735,26 @@ store:
 ; are referenced from other routines (NS_BeginConcurrent_Impl, NS_RecvByte_Impl).
 ;
 SerialInputIrqHandler:
+		;capture sticky POKEY receive errors before touching SERIN:
+		;SKSTAT latches read 0 when tripped (bit7 = framing error,
+		;bit6 = serial input overrun). Mirror them inverted (1 = error)
+		;into serialErrors and strobe SKRES to re-arm the latches.
+		lda		SKSTAT
+		eor		#$ff
+		and		#$c0
+		beq		SIH_no_serial_error
+		sta		SKRES
+		sta		SIH_errbits
+		txa
+		pha
+		ldx		serialConcurrentNum
+		lda		#0
+SIH_errbits = *-1
+		ora		serialErrors-1,x
+		sta		serialErrors-1,x
+		pla
+		tax
+SIH_no_serial_error:
 		;check if we have space in the buffer
 		lda		#0
 serialInSpaceLo = *-1
@@ -781,6 +801,10 @@ SIH_xit:
 		rti
 
 SIH_is_full:
+		;ring full: still read SERIN so the receive condition is
+		;serviced (byte discarded); leaving it unread compounds the
+		;first software overflow into a hardware overrun.
+		lda		SERIN
 		;set overflow error status (bit 4)
 		txa
 		pha
